@@ -1,8 +1,13 @@
 CC=gcc
-DEBUG=
+WALL=-Wall
+
+DEBUG=-g -fvar-tracking
 FUSE_LIBS=`pkg-config fuse --cflags --libs`
-CFLAGS=-c -Wall $(FUSE_LIBS)
-LFLAGS=-Wall $(FUSE_LIBS)
+CFLAGS=$(WALL) $(FUSE_LIBS) $(DEBUG)
+
+LIBGDP=	-lgdp
+LIBEP=	-lep
+LFLAGS=	-Wall $(FUSE_LIBS) $(LIBGDP) $(LIBEP) $(DEBUG)
 
 BINDIR=bin
 BUILDDIR=$(BINDIR)/build
@@ -14,7 +19,7 @@ all: $(BINDIR)/gdpfs
 
 $(BUILDDIR)/%.o: %.c
 	mkdir -p $(BUILDDIR)
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BINDIR)/gdpfs: $(OBJ)
 	mkdir -p $(BINDIR)
