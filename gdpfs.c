@@ -15,6 +15,7 @@
 #include <fcntl.h>
 
 static char *log_path;
+static bool read_only = false;
 
 static gdp_gcl_t *FSGcl;
 
@@ -74,7 +75,7 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
         stbuf->st_mode = S_IFDIR | 0555;
         stbuf->st_nlink = 2;
     } else if (strcmp(path, log_path) == 0) {
-        stbuf->st_mode = S_IFREG | 0666;
+        stbuf->st_mode = S_IFREG | (read_only ? 0444 : 0644);
         stbuf->st_nlink = 1;
         stbuf->st_size = current_file_size();
         stbuf->st_uid = getuid();
@@ -207,17 +208,27 @@ gdpfs_read(const char *path, char *buf, size_t size, off_t offset,
 }
 
 static int
-do_write(size_t file_size, const char *ent_buf, size_t ent_size, off_t ent_offset)
+do_write(const char *path, size_t file_size, const char *ent_buf,
+         size_t ent_size, off_t ent_offset)
 {
     EP_STAT estat;
     size_t written;
-    gdp_datum_t *datum = gdp_datum_new();
-    gdp_buf_t *datum_buf = gdp_datum_getbuf(datum);
+    gdp_datum_t *datum;
+    gdp_buf_t *datum_buf;
     gdpfs_ent_t entry = {
         .file_size = file_size,
         .ent_offset = ent_offset,
         .ent_size = ent_size,
     };
+
+    if(strcmp(path, log_path) != 0)
+        return -ENOENT;
+
+    if (read_only)
+        return -EPERM;
+
+    datum = gdp_datum_new();
+    datum_buf = gdp_datum_getbuf(datum);
     gdp_buf_write(datum_buf, &entry, sizeof(gdpfs_ent_t));
     gdp_buf_write(datum_buf, ent_buf, ent_size);
 
@@ -248,20 +259,17 @@ gdpfs_write(const char *path, const char *buf, size_t size, off_t offset,
     size_t current_size;
     size_t potential_size;
 
-    if(strcmp(path, log_path) != 0)
-        return -ENOENT;
-
     current_size = current_file_size();
     potential_size = offset + size;
     file_size = max(current_size, potential_size);
 
-    return do_write(file_size, buf, size, offset);
+    return do_write(path, file_size, buf, size, offset);
 }
 
 static int
 gdpfs_truncate(const char *path, off_t size)
 {
-    return do_write(size, NULL, 0, 0);
+    return do_write(path, size, NULL, 0, 0);
 }
 
 static struct fuse_operations gdpfs_oper = {
@@ -277,7 +285,7 @@ static void
 usage(void)
 {
     fprintf(stderr,
-        "Usage: %s [-h] logname -- [fuse args]\n"
+        "Usage: %s [-hr] logname -- [fuse args]\n"
         "    -h display this usage message and exit\n"
         "    -r mount the filesys in read only mode\n",
         ep_app_getprogname());
@@ -289,7 +297,6 @@ close_resources()
 {
     EP_STAT estat;
     int status = 0;
-    printf("closing resources\n");
     estat = gdp_gcl_close(FSGcl);
     if (!EP_STAT_ISOK(estat))
     {
@@ -327,12 +334,16 @@ main(int argc, char *argv[])
          fuseargc--);
     argc -= fuseargc;
 
-    while ((opt = getopt(argc, argv, "h::")) > 0)
+    while ((opt = getopt(argc, argv, "hr::")) > 0)
     {
         switch (opt)
         {
         case 'h':
             show_usage = true;
+            break;
+
+        case 'r':
+            read_only = true;
             break;
 
         default:
@@ -367,7 +378,6 @@ main(int argc, char *argv[])
     strcpy(log_path + 1, gclpname);
 
     // initialize the GDP library
-    printf("Initializing GDP library:\n");
     estat = gdp_init(NULL);
     if (!EP_STAT_ISOK(estat))
     {
@@ -376,7 +386,6 @@ main(int argc, char *argv[])
     }
 
     // convert the name to internal form
-    printf("Converting name %s to internal form:\n", gclpname);
     estat = gdp_parse_name(gclpname, gclname);
     if (!EP_STAT_ISOK(estat))
     {
@@ -386,7 +395,6 @@ main(int argc, char *argv[])
     }
 
     // open the GCL for writing
-    printf("Opening GCL for writing:\n");
     estat = gdp_gcl_open(gclname, GDP_MODE_RA, NULL, &FSGcl);
     if (!EP_STAT_ISOK(estat))
     {
