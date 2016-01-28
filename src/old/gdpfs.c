@@ -272,6 +272,34 @@ gdpfs_truncate(const char *path, off_t size)
     return do_write(path, size, NULL, 0, 0);
 }
 
+static int
+gdpfs_create(const char *file, mode_t mode, struct fuse_file_info *info)
+{
+    printf("Create not implemented %s\n", file);
+    return 0;
+}
+
+static int
+gdpfs_mkdir(const char * file, mode_t mode)
+{
+    printf("Mkdir not implemented\n");
+    return 0;
+}
+
+static int
+gdpfs_chmod (const char *file, mode_t mode)
+{
+    printf("Chmod not implemented\n");
+    return 0;
+}
+
+static int
+gdpfs_chown (const char *file, uid_t uid, gid_t gid)
+{
+    printf("Chown not implemented\n");
+    return 0;
+}
+
 static struct fuse_operations gdpfs_oper = {
     .getattr        = gdpfs_getattr,
     .readdir        = gdpfs_readdir,
@@ -279,6 +307,10 @@ static struct fuse_operations gdpfs_oper = {
     .read           = gdpfs_read,
     .write          = gdpfs_write,
     .truncate       = gdpfs_truncate,
+    .create         = gdpfs_create,
+    .mkdir          = gdpfs_mkdir,
+    .chmod          = gdpfs_chmod,
+    .chown          = gdpfs_chown,
 };
 
 static void
@@ -321,6 +353,7 @@ main(int argc, char *argv[])
 {
     EP_STAT estat;
     gdp_name_t gclname;
+    gdp_iomode_t gclmode;
     char *gclpname;
     int opt;
     int fuseargc;
@@ -394,8 +427,9 @@ main(int argc, char *argv[])
         exit(EX_NOINPUT);
     }
 
-    // open the GCL for writing
-    estat = gdp_gcl_open(gclname, GDP_MODE_RA, NULL, &FSGcl);
+    // open the GCL
+    gclmode = read_only ? GDP_MODE_RO : GDP_MODE_RA;
+    estat = gdp_gcl_open(gclname, gclmode, NULL, &FSGcl);
     if (!EP_STAT_ISOK(estat))
     {
         char sbuf[100];
