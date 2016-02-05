@@ -1,3 +1,5 @@
+#include "gdpfs.h"
+
 #include <ep/ep.h>
 #include <ep/ep_app.h>
 #include <ep/ep_dbg.h>
@@ -28,7 +30,7 @@ struct gdpfs_entry
 typedef struct gdpfs_entry gdpfs_entry_t;
 
 static char *log_path;
-static bool read_only = false;
+static bool ro_mode = false;
 
 static gdpfs_log_t *log_handle;
 
@@ -86,7 +88,7 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
         stbuf->st_mode = S_IFDIR | 0555;
         stbuf->st_nlink = 2;
     } else if (strcmp(path, log_path) == 0) {
-        stbuf->st_mode = S_IFREG | (read_only ? 0444 : 0644);
+        stbuf->st_mode = S_IFREG | (ro_mode ? 0444 : 0644);
         stbuf->st_nlink = 1;
         stbuf->st_size = current_file_size();
         stbuf->st_uid = getuid();
@@ -228,7 +230,7 @@ do_write(const char *path, size_t file_size, const char *buf,
     if(strcmp(path, log_path) != 0)
         return -ENOENT;
 
-    if (read_only)
+    if (ro_mode)
         return -EPERM;
 
     log_ent = gdpfs_log_ent_new();
@@ -322,112 +324,33 @@ static struct fuse_operations gdpfs_oper = {
     .chown          = gdpfs_chown,
 };
 
-static void
-usage(void)
+int gdpfs_run(char *gclpname, bool ro, int fuse_argc, char *fuse_argv[])
 {
-    fprintf(stderr,
-        "Usage: %s [-hr] logname -- [fuse args]\n"
-        "    -h display this usage message and exit\n"
-        "    -r mount the filesys in read only mode\n",
-        ep_app_getprogname());
-    exit(EX_USAGE);
-}
-
-static void
-close_resources()
-{
-    EP_STAT estat;
-    int status = 0;
-    estat = gdpfs_log_close(log_handle);
-    if (!EP_STAT_ISOK(estat))
-    {
-        char sbuf[100];
-
-        ep_app_error("Cannot close GCL:\n    %s",
-            ep_stat_tostr(estat, sbuf, sizeof sbuf));
-        status = -EP_STAT_DETAIL(estat);
-    }
-    free(log_path);
-    exit(status);
-}
-
-static void
-sig_int(int sig)
-{
-    close_resources();
-}
-
-int
-main(int argc, char *argv[])
-{
-    EP_STAT estat;
-    //gdpfs_log_t *log_handle;
-    char *log_name;
-    int opt;
-    int fuseargc;
     int ret;
-    bool show_usage = false;
-    char *argv0 = argv[0];
+    EP_STAT estat;
 
-    // we only want to parse gdpfs args, not fuse args. We need to count them.
-    for (fuseargc = argc;
-         fuseargc > 0 && strcmp(argv[argc - fuseargc], "--") != 0;
-         fuseargc--);
-    argc -= fuseargc;
-
-    while ((opt = getopt(argc, argv, "hr::")) > 0)
-    {
-        switch (opt)
-        {
-        case 'h':
-            show_usage = true;
-            break;
-
-        case 'r':
-            read_only = true;
-            break;
-
-        default:
-            show_usage = true;
-            break;
-        }
-    }
-    argc -= optind;
-    argv += optind;
-
-    log_name = argv[0];
-    argc--;
-    argv++;
-
-    if (show_usage || argc != 0)
-        usage();
-
-    if (fuseargc > 0)
-    {
-        argv++;     // consume the --
-        fuseargc--; // don't coun't the --
-        argc = fuseargc;
-    }
-
-    // re-add argv[0] (fuse needs it).
-    argv--;
-    argv[0] = argv0;
-    argc++;
-
-    log_path = malloc(sizeof(char) * (2 + strlen(log_name)));
+    ro_mode = ro;
+    
+    // TODO: trash this
+    log_path = malloc(sizeof(char) * (2 + strlen(gclpname)));
     log_path[0] = '/';
-    strcpy(log_path + 1, log_name);
+    strcpy(log_path + 1, gclpname);
 
     estat = init_gdpfs_log();
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
-    
-    estat = gdpfs_log_open(&log_handle, log_name, read_only);
+    estat = gdpfs_log_open(&log_handle, gclpname, ro);
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
 
-    signal(SIGINT, sig_int);
-    ret = fuse_main(argc, argv, &gdpfs_oper, NULL);
-    close_resources();
+    // TODO: properly close resources after fuse runs.
+    ret = fuse_main(fuse_argc, fuse_argv, &gdpfs_oper, NULL);
+    gdpfs_stop();
     return ret;
+}
+
+void gdpfs_stop()
+{
+    gdpfs_log_close(log_handle);
+    free(log_path);
 }

@@ -74,6 +74,13 @@ EP_STAT gdpfs_log_close(gdpfs_log_t *handle)
     EP_STAT estat;
 
     estat = gdp_gcl_close(handle->gcl_handle);
+    if (!EP_STAT_ISOK(estat))
+    {
+        char sbuf[100];
+
+        ep_app_error("Cannot close GCL:\n    %s",
+            ep_stat_tostr(estat, sbuf, sizeof sbuf));
+    }
     ep_mem_free(handle);
     return estat;
 }
