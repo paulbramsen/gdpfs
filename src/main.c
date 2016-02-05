@@ -1,6 +1,6 @@
 #include "gdpfs.h"
 
-#include <gdp/gdp.h>
+#include <ep/ep.h>
 #include <ep/ep_app.h>
 #include <ep/ep_dbg.h>
 
@@ -24,7 +24,7 @@ usage(void)
 static void
 sig_int(int sig)
 {
-    gdpfs_shutdown();
+    gdpfs_stop();
 }
 
 int

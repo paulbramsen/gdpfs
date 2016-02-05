@@ -15,21 +15,12 @@ SRCDIR=src
 BINDIR=bin
 BUILDDIR=$(BINDIR)/build
 
-_OBJ=block_cache.o directory.o gdpfs.o inode.o main.o
+_OBJ=gdpfs.o gdpfs_file.o gdpfs_log.o gdpfs_dir.o main.o
 OBJ=$(patsubst %,$(BUILDDIR)/%,$(_OBJ))
-
-_OBJOLD=old/gdpfs.o old/gdpfs_file.o old/gdpfs_log.o old/gdpfs_dir.o old/main.o
-OBJOLD=$(patsubst %,$(BUILDDIR)/%,$(_OBJOLD))
 
 all: $(BINDIR)/gdpfs
 
 $(BINDIR)/gdpfs: $(OBJ)
-	mkdir -p $(@D)
-	gcc -o $@ $^ $(LFLAGS)
-
-old: $(BINDIR)/gdpfsold
-
-$(BINDIR)/gdpfsold: $(OBJOLD)
 	mkdir -p $(@D)
 	gcc -o $@ $^ $(LFLAGS)
 

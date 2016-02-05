@@ -1,9 +1,9 @@
-#ifndef _GDPFS_H_
-#define _GDPFS_H_
+#ifndef _GDPFS_PRIV_H_
+#define _GDPFS_PRIV_H_
 
-#include <gdp/gdp.h>
+#include <stdbool.h>
 
 int gdpfs_run(char *gclpname, bool ro_mode, int fuse_argc, char *fuse_argv[]);
-void gdpfs_shutdown();
+void gdpfs_stop();
 
-#endif // _GDPFS_H_
+#endif // _GDPFS_PRIV_H_

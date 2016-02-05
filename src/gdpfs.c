@@ -1,15 +1,38 @@
 #include "gdpfs.h"
 
-#include "inode.h"
+#include <ep/ep.h>
+#include <ep/ep_app.h>
+#include <ep/ep_dbg.h>
 
-#define FUSE_USE_VERSION 30
-#include <errno.h>
-#include <fuse.h>
-#include <string.h>
 #include <sysexits.h>
 
-static const char *log_path;
-static bool ro_mode;
+#define FUSE_USE_VERSION 30
+#include <fuse.h>
+#include <stdio.h>
+#include <string.h>
+#include <signal.h>
+#include <errno.h>
+#include <fcntl.h>
+#include "gdpfs_log.h"
+#include "gdpfs_stat.h"
+
+#define MAGIC_NUMBER 0xb531479b64f64e0d
+
+struct gdpfs_entry
+{
+    size_t file_size;
+    off_t ent_offset;
+    size_t ent_size;
+    bool is_dir;
+    uint64_t magic;
+};
+
+typedef struct gdpfs_entry gdpfs_entry_t;
+
+static char *log_path;
+static bool ro_mode = false;
+
+static gdpfs_log_t *log_handle;
 
 #define max(a,b) \
    ({ __typeof__ (a) _a = (a); \
@@ -20,63 +43,54 @@ static bool ro_mode;
        __typeof__ (b) _b = (b); \
      _a < _b ? _a : _b; })
 
-/***********/
-/* Private */
-/***********/
-
-/*
 static size_t
 current_file_size()
 {
     EP_STAT estat;
     size_t size;
-    gdpfs_ent_t curr_entry;
-    gdp_buf_t *datum_buf;
-    gdp_datum_t *datum;
+    gdpfs_entry_t curr_entry;
+    gdpfs_log_ent_t *log_ent;
 
-    datum = gdp_datum_new();
-    estat = gdp_gcl_read(FSGcl, -1, datum);
+    estat = gdpfs_log_ent_open(log_handle, &log_ent, -1);
     if (!EP_STAT_ISOK(estat))
     {
-        if (EP_STAT_DETAIL(estat) == GDP_COAP_NOTFOUND)
+        if (EP_STAT_IS_SAME(estat, GDPFS_STAT_NOTFOUND))
         {
             // no entries yet so file size is 0
             size = 0;
         }
         else
         {
-            char sbuf[100];
-            ep_app_error("Cannot read GCL:\n    %s",
-                ep_stat_tostr(estat, sbuf, sizeof sbuf));
+            // error
+            size = 0;
         }
+        goto fail0;
     }
     else
     {
-        datum_buf = gdp_datum_getbuf(datum);
-        // TODO: check that this returns sizeof(gdpfs_ent_t). If not, corruption
-        gdp_buf_read(datum_buf, &curr_entry, sizeof(gdpfs_ent_t));
+        // TODO: check that this returns sizeof(gdpfs_entry_t). If not, corruption
+        gdpfs_log_ent_read(log_ent, &curr_entry, sizeof(gdpfs_entry_t));
         size = curr_entry.file_size;
     }
     // remember to free our resources
-    gdp_datum_free(datum);
+    gdpfs_log_ent_close(log_ent);
 
+fail0:
     return size;
 }
-*/
 
 static int
 gdpfs_getattr(const char *path, struct stat *stbuf)
 {
-    printf("path:%s\n", path);
     int res = 0;
     memset(stbuf, 0, sizeof(struct stat));
     if (strcmp(path, "/") == 0) {
         stbuf->st_mode = S_IFDIR | 0555;
         stbuf->st_nlink = 2;
-    } else if (strcmp(path + 1, log_path) == 0) {
+    } else if (strcmp(path, log_path) == 0) {
         stbuf->st_mode = S_IFREG | (ro_mode ? 0444 : 0644);
         stbuf->st_nlink = 1;
-        //stbuf->st_size = 50;//current_file_size();
+        stbuf->st_size = current_file_size();
         stbuf->st_uid = getuid();
         stbuf->st_gid = getgid();
     } else
@@ -94,22 +108,20 @@ gdpfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         return -ENOENT;
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
-    filler(buf, log_path, NULL, 0);
-    return 0;
-}
-
-static int
-gdpfs_open(const char *path, struct fuse_file_info *fi)
-{
-    /*
-    if (strcmp(path, log_path) != 0)
-        return -ENOENT;
-    return 0;
-    */
+    filler(buf, log_path + 1, NULL, 0);
     return 0;
 }
 
 /*
+static int
+gdpfs_open(const char *path, struct fuse_file_info *fi)
+{
+    if (strcmp(path, log_path) != 0)
+        return -ENOENT;
+    return 0;
+}
+*/
+
 static int
 do_read_starting_at_rec_no(char *buf, size_t size, off_t offset, int rec_no)
 {
@@ -119,35 +131,28 @@ do_read_starting_at_rec_no(char *buf, size_t size, off_t offset, int rec_no)
     size_t read_size;
     size_t left_read_size;
     size_t read_so_far;
-    gdpfs_ent_t entry;
-    gdp_buf_t *datum_buf;
-    gdp_datum_t *datum;
+    gdpfs_entry_t entry;
+    gdpfs_log_ent_t *log_ent;
 
     if (size == 0)
     {
         return 0;
     }
 
-    datum = gdp_datum_new();
-    estat = gdp_gcl_read(FSGcl, rec_no, datum);
+    estat = gdpfs_log_ent_open(log_handle, &log_ent, rec_no);
     if (!EP_STAT_ISOK(estat))
     {
-        if (EP_STAT_DETAIL(estat) == GDP_COAP_NOTFOUND)
-        {
-            // reached end of log
-        }
-        else
+        if (!EP_STAT_IS_SAME(estat, GDPFS_STAT_NOTFOUND))
         {
             char sbuf[100];
-            ep_app_error("Cannot read GCL:\n    %s",
+            ep_app_error("Issue while reading GCL:\n    %s",
                 ep_stat_tostr(estat, sbuf, sizeof sbuf));
         }
         goto fail0;
     }
-    datum_buf = gdp_datum_getbuf(datum);
-    data_size = gdp_buf_getlength(datum_buf);
-    if (gdp_buf_read(datum_buf, &entry, sizeof(gdpfs_ent_t)) != sizeof(gdpfs_ent_t)
-        || data_size != sizeof(gdpfs_ent_t) + entry.ent_size)
+    data_size = gdpfs_log_ent_length(log_ent);
+    if (gdpfs_log_ent_read(log_ent, &entry, sizeof(gdpfs_entry_t)) != sizeof(gdpfs_entry_t)
+        || data_size != sizeof(gdpfs_entry_t) + entry.ent_size)
     {
         ep_app_error("Corrupt log entry.");
         goto fail0;
@@ -168,13 +173,12 @@ do_read_starting_at_rec_no(char *buf, size_t size, off_t offset, int rec_no)
 
         // this log entry has data we want
         // TODO: error checking
-        gdp_buf_drain(datum_buf, read_start - entry.ent_offset);
-        gdp_buf_read(datum_buf, buf + left_read_size, read_size);
-        gdp_datum_free(datum);
+        gdpfs_log_ent_read(log_ent, NULL, read_start - entry.ent_offset);
+        gdpfs_log_ent_read(log_ent, buf + left_read_size, read_size);
+        gdpfs_log_ent_close(log_ent);
 
         // do left read
-        do_read_starting_at_rec_no(buf, left_read_size, offset,
-                                   rec_no - 1);
+        do_read_starting_at_rec_no(buf, left_read_size, offset, rec_no - 1);
         // assume read of size size succeeds (if not then they're just filled
         // with zeros) and do right read.
         read_so_far = left_read_size + read_size;
@@ -183,52 +187,44 @@ do_read_starting_at_rec_no(char *buf, size_t size, off_t offset, int rec_no)
     }
     else
     {
-        gdp_datum_free(datum);
+        gdpfs_log_ent_close(log_ent);
         do_read_starting_at_rec_no(buf, size, offset, rec_no - 1);
     }
     return size;
 
 fail0:
-    gdp_datum_free(datum);
+    gdpfs_log_ent_close(log_ent);
     return 0;
 }
-*/
 
-/*
 static int
 do_read(char *buf, size_t size, off_t offset)
 {
     memset(buf, 0, size);
     return do_read_starting_at_rec_no(buf, size, offset, -1);
 }
-*/
 
 static int
 gdpfs_read(const char *path, char *buf, size_t size, off_t offset,
            struct fuse_file_info *fi)
 {
-    /*
     (void) fi;
     if(strcmp(path, log_path) != 0)
         return -ENOENT;
     return do_read(buf, size, offset);
-    */
-    return 0;
 }
 
-/*
 static int
-do_write(const char *path, size_t file_size, const char *ent_buf,
-         size_t ent_size, off_t ent_offset)
+do_write(const char *path, size_t file_size, const char *buf,
+         size_t size, off_t offset)
 {
     EP_STAT estat;
     size_t written;
-    gdp_datum_t *datum;
-    gdp_buf_t *datum_buf;
-    gdpfs_ent_t entry = {
+    gdpfs_log_ent_t *log_ent;
+    gdpfs_entry_t entry = {
         .file_size = file_size,
-        .ent_offset = ent_offset,
-        .ent_size = ent_size,
+        .ent_offset = offset,
+        .ent_size = size,
     };
 
     if(strcmp(path, log_path) != 0)
@@ -237,36 +233,39 @@ do_write(const char *path, size_t file_size, const char *ent_buf,
     if (ro_mode)
         return -EPERM;
 
-    datum = gdp_datum_new();
-    datum_buf = gdp_datum_getbuf(datum);
-    gdp_buf_write(datum_buf, &entry, sizeof(gdpfs_ent_t));
-    gdp_buf_write(datum_buf, ent_buf, ent_size);
+    log_ent = gdpfs_log_ent_new();
+    if (!log_ent)
+    {
+        written = 0;
+        goto fail0;
+    }
+    if (gdpfs_log_ent_write(log_ent, &entry, sizeof(gdpfs_entry_t)) != 0)
+        goto fail0;
+    if (gdpfs_log_ent_write(log_ent, buf, size) != 0)
+        goto fail0;
 
-    estat = gdp_gcl_append(FSGcl, datum);
+    estat = gdpfs_log_append(log_handle, log_ent);
     if (!EP_STAT_ISOK(estat))
     {
-        char sbuf[100];
-        ep_app_error("Cannot read GCL:\n    %s",
-            ep_stat_tostr(estat, sbuf, sizeof sbuf));
         written = 0;
     }
     else
     {
-        written = ent_size;
+        written = size;
     }
 
     // remember to free our resources
-    gdp_datum_free(datum);
+    gdpfs_log_ent_close(log_ent);
+    return written;
 
+fail0:
     return written;
 }
-*/
 
 static int
 gdpfs_write(const char *path, const char *buf, size_t size, off_t offset,
             struct fuse_file_info *fi)
 {
-    /*
     size_t file_size;
     size_t current_size;
     size_t potential_size;
@@ -276,50 +275,82 @@ gdpfs_write(const char *path, const char *buf, size_t size, off_t offset,
     file_size = max(current_size, potential_size);
 
     return do_write(path, file_size, buf, size, offset);
-    */
-    return 0;
 }
 
 static int
 gdpfs_truncate(const char *path, off_t size)
 {
-    //return do_write(path, size, NULL, 0, 0);
+    return do_write(path, size, NULL, 0, 0);
+}
+
+static int
+gdpfs_create(const char *file, mode_t mode, struct fuse_file_info *info)
+{
+    printf("Create not implemented. File:\"%s\"\n", file);
     return 0;
 }
 
+static int
+gdpfs_mkdir(const char * file, mode_t mode)
+{
+    printf("Mkdir not implemented. File:\"%s\"\n", file);
+    return 0;
+}
 
+static int
+gdpfs_chmod (const char *file, mode_t mode)
+{
+    printf("Chmod not implemented. File:\"%s\"\n", file);
+    return 0;
+}
+
+static int
+gdpfs_chown (const char *file, uid_t uid, gid_t gid)
+{
+    printf("Chown not implemented. File:\"%s\"\n", file);
+    return 0;
+}
 
 static struct fuse_operations gdpfs_oper = {
     .getattr        = gdpfs_getattr,
     .readdir        = gdpfs_readdir,
-    .open           = gdpfs_open,
-    //.read           = gdpfs_read,
-    //.write          = gdpfs_write,
-    //.truncate       = gdpfs_truncate,
+    //.open           = gdpfs_open,
+    .read           = gdpfs_read,
+    .write          = gdpfs_write,
+    .truncate       = gdpfs_truncate,
+    .create         = gdpfs_create,
+    .mkdir          = gdpfs_mkdir,
+    .chmod          = gdpfs_chmod,
+    .chown          = gdpfs_chown,
 };
 
-/**********/
-/* Public */
-/**********/
-
-void
-gdpfs_shutdown()
-{
-    int status;
-    status = bc_free_resources();
-    exit(status);
-}
-
-int
-gdpfs_run(char *gclpname, bool ro, int fuse_argc, char *fuse_argv[])
+int gdpfs_run(char *gclpname, bool ro, int fuse_argc, char *fuse_argv[])
 {
     int ret;
+    EP_STAT estat;
 
     ro_mode = ro;
-    log_path = gclpname;
+    
+    // TODO: trash this
+    log_path = malloc(sizeof(char) * (2 + strlen(gclpname)));
+    log_path[0] = '/';
+    strcpy(log_path + 1, gclpname);
+
+    estat = init_gdpfs_log();
+    if (!EP_STAT_ISOK(estat))
+        exit(EX_UNAVAILABLE);
+    estat = gdpfs_log_open(&log_handle, gclpname, ro);
+    if (!EP_STAT_ISOK(estat))
+        exit(EX_UNAVAILABLE);
 
     // TODO: properly close resources after fuse runs.
     ret = fuse_main(fuse_argc, fuse_argv, &gdpfs_oper, NULL);
-    gdpfs_shutdown();
+    gdpfs_stop();
     return ret;
+}
+
+void gdpfs_stop()
+{
+    gdpfs_log_close(log_handle);
+    free(log_path);
 }
