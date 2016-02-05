@@ -43,10 +43,10 @@ EP_STAT gdpfs_log_open(gdpfs_log_t **handle, char *log_name, bool ro_mode)
 
     // open the GCL
     gcl_mode = ro_mode ? GDP_MODE_RO : GDP_MODE_RA;
-    *handle = ep_mem_zalloc_f(sizeof(gdpfs_log_t));
+    *handle = ep_mem_zalloc(sizeof(gdpfs_log_t));
     if (handle == NULL)
     {
-        return GDPFS_STAT_MEM;
+        return GDPFS_STAT_OOMEM;
     }
     estat = gdp_gcl_open(gcl_name, gcl_mode, NULL, &(*handle)->gcl_handle);
     if (!EP_STAT_ISOK(estat))
@@ -103,7 +103,7 @@ gdpfs_log_ent_t *gdpfs_log_ent_new()
 {
     gdpfs_log_ent_t *log_ent;
 
-    log_ent = ep_mem_zalloc_f(sizeof(gdpfs_log_ent_t));
+    log_ent = ep_mem_zalloc(sizeof(gdpfs_log_ent_t));
     if (log_ent == NULL)
     {
         goto fail0;
@@ -128,7 +128,7 @@ EP_STAT gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent, gdpfs_rec
     *ent = log_ent;
     if (log_ent == NULL)
     {
-        estat = GDPFS_STAT_MEM;
+        estat = GDPFS_STAT_OOMEM;
         goto fail0;
     }
 
