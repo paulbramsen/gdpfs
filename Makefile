@@ -15,7 +15,7 @@ SRCDIR=src
 BINDIR=bin
 BUILDDIR=$(BINDIR)/build
 
-_OBJ=gdpfs.o gdpfs_file.o gdpfs_log.o gdpfs_dir.o main.o
+_OBJ=gdpfs.o gdpfs_file.o gdpfs_log.o gdpfs_dir.o main.o bitmap.o
 OBJ=$(patsubst %,$(BUILDDIR)/%,$(_OBJ))
 
 all: $(BINDIR)/gdpfs

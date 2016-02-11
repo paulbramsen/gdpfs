@@ -10,7 +10,3 @@ struct gdpfs_dir_entry
     bool in_use;
     char name[NAME_MAX2];
 };
-
-typedef struct gdpfs_dir_entry gdpfs_dir_entry_t;
-
-

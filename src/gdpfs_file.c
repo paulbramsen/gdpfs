@@ -3,11 +3,12 @@
 #include "gdpfs_log.h"
 #include "gdpfs_stat.h"
 
-#include <ep/ep.h>
 #include <ep/ep_app.h>
+#include <ep/ep_hash.h>
 #include <string.h>
 
 #include "gdpfs.h"
+#include "bitmap.h"
 
 #define max(a,b) \
    ({ __typeof__ (a) _a = (a); \
@@ -18,8 +19,18 @@
        __typeof__ (b) _b = (b); \
      _a < _b ? _a : _b; })
 
-// TODO: internal file structure. Rename this
-struct gdpfs_entry
+#define FD_HASH_SIZE 256
+#define MAX_FDS 5
+static EP_HASH *fd_hash;
+static bitmap_t *fds;
+
+struct gdpfs_file
+{
+    gdpfs_log_t *log_handle;
+    bool ro_mode;
+};
+
+struct gdpfs_fmeta
 {
     size_t file_size;
     off_t ent_offset;
@@ -27,8 +38,27 @@ struct gdpfs_entry
     bool is_dir;
     uint64_t magic;
 };
+typedef struct gdpfs_fmeta gdpfs_fmeta_t;
 
-typedef struct gdpfs_entry gdpfs_entry_t;
+EP_STAT init_gdpfs_file()
+{
+    EP_STAT estat;
+
+    fd_hash = ep_hash_new(NULL, NULL, FD_HASH_SIZE);
+    // TODO: if hash alloc fails, I think it will try to access NULL mem
+    if (fd_hash == NULL)
+        return GDPFS_STAT_OOMEM;
+    fds = bitmap_create(MAX_FDS);
+    if (fds == NULL)
+        return GDPFS_STAT_OOMEM;
+    estat = init_gdpfs_log();
+    return estat;
+}
+
+void stop_gdpfs_file()
+{
+    bitmap_free(fds);
+}
 
 EP_STAT gdpfs_file_open(gdpfs_file_t **file, char *name, bool ro_mode)
 {
@@ -72,7 +102,7 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf,
     size_t read_size;
     size_t left_read_size;
     size_t read_so_far;
-    gdpfs_entry_t entry;
+    gdpfs_fmeta_t entry;
     gdpfs_log_ent_t *log_ent;
 
     if (size == 0)
@@ -92,8 +122,8 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf,
         goto fail0;
     }
     data_size = gdpfs_log_ent_length(log_ent);
-    if (gdpfs_log_ent_read(log_ent, &entry, sizeof(gdpfs_entry_t)) != sizeof(gdpfs_entry_t)
-        || data_size != sizeof(gdpfs_entry_t) + entry.ent_size)
+    if (gdpfs_log_ent_read(log_ent, &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
+        || data_size != sizeof(gdpfs_fmeta_t) + entry.ent_size)
     {
         ep_app_error("Corrupt log entry.");
         goto fail0;
@@ -151,7 +181,7 @@ static size_t do_write(gdpfs_file_t *file, size_t file_size, const char *buf,
     EP_STAT estat;
     size_t written;
     gdpfs_log_ent_t *log_ent;
-    gdpfs_entry_t entry = {
+    gdpfs_fmeta_t entry = {
         .file_size = file_size,
         .ent_offset = offset,
         .ent_size = size,
@@ -167,7 +197,7 @@ static size_t do_write(gdpfs_file_t *file, size_t file_size, const char *buf,
         written = 0;
         goto fail0;
     }
-    if (gdpfs_log_ent_write(log_ent, &entry, sizeof(gdpfs_entry_t)) != 0)
+    if (gdpfs_log_ent_write(log_ent, &entry, sizeof(gdpfs_fmeta_t)) != 0)
         goto fail0;
     if (gdpfs_log_ent_write(log_ent, buf, size) != 0)
         goto fail0;
@@ -204,7 +234,7 @@ size_t gdpfs_file_write(gdpfs_file_t *file, const char *buf, size_t size,
     return do_write(file, file_size, buf, size, offset);
 }
 
-int gdpfs_file_truncate(gdpfs_file_t *file, size_t file_size)
+int gdpfs_file_ftruncate(gdpfs_file_t *file, size_t file_size)
 {
     return do_write(file, file_size, NULL, 0, 0);
 }
@@ -213,7 +243,7 @@ size_t gdpfs_file_size(gdpfs_file_t *file)
 {
     EP_STAT estat;
     size_t size;
-    gdpfs_entry_t curr_entry;
+    gdpfs_fmeta_t curr_entry;
     gdpfs_log_ent_t *log_ent;
 
     estat = gdpfs_log_ent_open(file->log_handle, &log_ent, -1);
@@ -233,8 +263,8 @@ size_t gdpfs_file_size(gdpfs_file_t *file)
     }
     else
     {
-        // TODO: check that this returns sizeof(gdpfs_entry_t). If not, corruption
-        gdpfs_log_ent_read(log_ent, &curr_entry, sizeof(gdpfs_entry_t));
+        // TODO: check that this returns sizeof(gdpfs_fmeta_t). If not, corruption
+        gdpfs_log_ent_read(log_ent, &curr_entry, sizeof(gdpfs_fmeta_t));
         size = curr_entry.file_size;
     }
     // remember to free our resources

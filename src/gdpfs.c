@@ -99,8 +99,16 @@ gdpfs_truncate(const char *path, off_t file_size)
 {
     if(strcmp(path, log_path) != 0)
         return -ENOENT;
+    return gdpfs_file_ftruncate(file_handle, file_size);
+}
 
-    return gdpfs_file_truncate(file_handle, file_size);
+static int
+gdpfs_ftruncate(const char *path, off_t file_size, struct fuse_file_info *fi)
+{
+    (void)fi;
+    if(strcmp(path, log_path) != 0)
+        return -ENOENT;
+    return gdpfs_file_ftruncate(file_handle, file_size);
 }
 
 static int
@@ -138,6 +146,7 @@ static struct fuse_operations gdpfs_oper = {
     .read           = gdpfs_read,
     .write          = gdpfs_write,
     .truncate       = gdpfs_truncate,
+    .ftruncate      = gdpfs_ftruncate,
     .create         = gdpfs_create,
     .mkdir          = gdpfs_mkdir,
     .chmod          = gdpfs_chmod,
@@ -156,7 +165,7 @@ int gdpfs_run(char *gclpname, bool ro, int fuse_argc, char *fuse_argv[])
     log_path[0] = '/';
     strcpy(log_path + 1, gclpname);
 
-    estat = init_gdpfs_log();
+    estat = init_gdpfs_file();
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
     estat = gdpfs_file_open(&file_handle, gclpname, ro);
