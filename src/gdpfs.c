@@ -31,8 +31,7 @@ typedef struct gdpfs_entry gdpfs_entry_t;
 
 static char *log_path;
 static bool ro_mode = false;
-
-static gdpfs_file_t *file_handle;
+static uint64_t fd_temp;
 
 static int
 gdpfs_getattr(const char *path, struct stat *stbuf)
@@ -45,7 +44,7 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
     } else if (strcmp(path, log_path) == 0) {
         stbuf->st_mode = S_IFREG | (ro_mode ? 0444 : 0644);
         stbuf->st_nlink = 1;
-        stbuf->st_size = gdpfs_file_size(file_handle);
+        stbuf->st_size = gdpfs_file_size(fd_temp);
         stbuf->st_uid = getuid();
         stbuf->st_gid = getgid();
     } else
@@ -72,6 +71,7 @@ gdpfs_open(const char *path, struct fuse_file_info *fi)
 {
     if (strcmp(path, log_path) != 0)
         return -ENOENT;
+    fi->fh = fd_temp;
     return 0;
 }
 
@@ -82,7 +82,7 @@ gdpfs_read(const char *path, char *buf, size_t size, off_t offset,
     (void) fi;
     if(strcmp(path, log_path) != 0)
         return -ENOENT;
-    return gdpfs_file_read(file_handle, buf, size, offset);
+    return gdpfs_file_read(fi->fh, buf, size, offset);
 }
 
 static int
@@ -91,7 +91,7 @@ gdpfs_write(const char *path, const char *buf, size_t size, off_t offset,
 {
     if(strcmp(path, log_path) != 0)
         return -ENOENT;
-    return gdpfs_file_write(file_handle, buf, size, offset);
+    return gdpfs_file_write(fi->fh, buf, size, offset);
 }
 
 static int
@@ -99,7 +99,7 @@ gdpfs_truncate(const char *path, off_t file_size)
 {
     if(strcmp(path, log_path) != 0)
         return -ENOENT;
-    return gdpfs_file_ftruncate(file_handle, file_size);
+    return gdpfs_file_ftruncate(fd_temp, file_size);
 }
 
 static int
@@ -108,7 +108,7 @@ gdpfs_ftruncate(const char *path, off_t file_size, struct fuse_file_info *fi)
     (void)fi;
     if(strcmp(path, log_path) != 0)
         return -ENOENT;
-    return gdpfs_file_ftruncate(file_handle, file_size);
+    return gdpfs_file_ftruncate(fi->fh, file_size);
 }
 
 static int
@@ -168,7 +168,7 @@ int gdpfs_run(char *gclpname, bool ro, int fuse_argc, char *fuse_argv[])
     estat = init_gdpfs_file();
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
-    estat = gdpfs_file_open(&file_handle, gclpname, ro);
+    fd_temp = gdpfs_file_open(&estat, gclpname, ro);
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
 
@@ -180,6 +180,6 @@ int gdpfs_run(char *gclpname, bool ro, int fuse_argc, char *fuse_argv[])
 
 void gdpfs_stop()
 {
-    gdpfs_file_close(file_handle);
+    gdpfs_file_close(fd_temp);
     free(log_path);
 }

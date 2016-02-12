@@ -4,7 +4,6 @@
 #include "gdpfs_stat.h"
 
 #include <ep/ep_app.h>
-#include <ep/ep_hash.h>
 #include <string.h>
 
 #include "gdpfs.h"
@@ -19,16 +18,12 @@
        __typeof__ (b) _b = (b); \
      _a < _b ? _a : _b; })
 
-#define FD_HASH_SIZE 256
-#define MAX_FDS 5
-static EP_HASH *fd_hash;
-static bitmap_t *fds;
-
 struct gdpfs_file
 {
     gdpfs_log_t *log_handle;
     bool ro_mode;
 };
+typedef struct gdpfs_file gdpfs_file_t;
 
 struct gdpfs_fmeta
 {
@@ -40,61 +35,104 @@ struct gdpfs_fmeta
 };
 typedef struct gdpfs_fmeta gdpfs_fmeta_t;
 
+#define MAX_FDS 256
+static bitmap_t *fds;
+static gdpfs_file_t **files;
+
 EP_STAT init_gdpfs_file()
 {
     EP_STAT estat;
 
-    fd_hash = ep_hash_new(NULL, NULL, FD_HASH_SIZE);
-    // TODO: if hash alloc fails, I think it will try to access NULL mem
-    if (fd_hash == NULL)
-        return GDPFS_STAT_OOMEM;
+    files = ep_mem_zalloc(sizeof(gdpfs_file_t *) * MAX_FDS);
+    if (files == NULL)
+        goto failoom;
     fds = bitmap_create(MAX_FDS);
     if (fds == NULL)
-        return GDPFS_STAT_OOMEM;
+        goto failoom;
     estat = init_gdpfs_log();
     return estat;
+
+failoom:
+    ep_mem_free(files);
+    bitmap_free(fds);
+    return GDPFS_STAT_OOMEM;
+}
+
+static gdpfs_file_t *lookup_fd(uint64_t fd)
+{
+    int set;
+
+    set = bitmap_is_set(fds, fd);
+    if (set < 0)
+    {
+        ep_app_error("recieved bad file descriptor:%Lu", fd);
+        return NULL;
+    }
+    return files[fd];
 }
 
 void stop_gdpfs_file()
 {
     bitmap_free(fds);
+    // TODO: close the log
 }
 
-EP_STAT gdpfs_file_open(gdpfs_file_t **file, char *name, bool ro_mode)
+uint64_t gdpfs_file_open(EP_STAT *ret_stat, char *name, bool ro_mode)
 {
-    EP_STAT estat;
+    EP_STAT stat;
+    uint64_t fd;
+    gdpfs_file_t *file;
 
-    *file = ep_mem_zalloc(sizeof(gdpfs_file_t));
-    if (!*file)
+    fd = bitmap_reserve(fds);
+    if (fd == -1)
     {
-        estat = GDPFS_STAT_OOMEM;
+        stat = GDPFS_STAT_OOMEM;
+        goto fail1;
+    }
+    file = ep_mem_zalloc(sizeof(gdpfs_file_t));
+    if (!file)
+    {
+        stat = GDPFS_STAT_OOMEM;
         goto fail0;
     }
-    estat = gdpfs_log_open(&(*file)->log_handle, name, ro_mode);
-    if (!EP_STAT_ISOK(estat))
+    stat = gdpfs_log_open(&file->log_handle, name, ro_mode);
+    if (!EP_STAT_ISOK(stat))
     {
         goto fail0;
     }
-    (*file)->ro_mode = ro_mode;
-    return estat;
+    file->ro_mode = ro_mode;
+    if (ret_stat != NULL)
+        *ret_stat = stat;
+    files[fd] = file;
+    return fd;
 
 fail0:
+    bitmap_release(fds, fd);
+fail1:
     ep_mem_free(file);
-    return estat;
+    if (ret_stat != NULL)
+        *ret_stat = stat;
+    return -1;
 }
 
-EP_STAT gdpfs_file_close(gdpfs_file_t *file)
+EP_STAT gdpfs_file_close(uint64_t fd)
 {
     EP_STAT estat;
+    gdpfs_file_t *file;
+
+    file = lookup_fd(fd);
+    if (file == NULL)
+        return GDPFS_STAT_BADFD;
 
     estat = gdpfs_log_close(file->log_handle);
     ep_mem_free(file);
+    bitmap_release(fds, fd);
 
     return estat;
 }
 
-static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf,
-    size_t size, off_t offset, gdpfs_recno_t rec_no)
+static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t size,
+        off_t offset, gdpfs_recno_t rec_no)
 {
     EP_STAT estat;
     size_t data_size;
@@ -168,17 +206,28 @@ fail0:
     return 0;
 }
 
-size_t gdpfs_file_read(gdpfs_file_t *file, char *buf, size_t size,
-        off_t offset)
+static size_t do_read(uint64_t fd, char *buf, size_t size, off_t offset)
 {
+    gdpfs_file_t *file;
+
+    file = lookup_fd(fd);
+    if (file == NULL)
+        return 0;
+
     memset(buf, 0, size);
-    return do_read_starting_at_rec_no(file, buf, size, offset, -1);
+    return do_read_starting_at_rec_no(files[fd], buf, size, offset, -1);
 }
 
-static size_t do_write(gdpfs_file_t *file, size_t file_size, const char *buf,
+size_t gdpfs_file_read(uint64_t fd, char *buf, size_t size, off_t offset)
+{
+    return do_read(fd, buf, size, offset);
+}
+
+static size_t do_write(uint64_t fd, size_t file_size, const char *buf,
         size_t size, off_t offset)
 {
     EP_STAT estat;
+    gdpfs_file_t *file;
     size_t written;
     gdpfs_log_ent_t *log_ent;
     gdpfs_fmeta_t entry = {
@@ -186,6 +235,10 @@ static size_t do_write(gdpfs_file_t *file, size_t file_size, const char *buf,
         .ent_offset = offset,
         .ent_size = size,
     };
+
+    file = lookup_fd(fd);
+    if (file == NULL)
+        return 0;
 
     // can't write if file is read only
     if (file->ro_mode)
@@ -220,31 +273,35 @@ fail0:
     return written;
 }
 
-size_t gdpfs_file_write(gdpfs_file_t *file, const char *buf, size_t size,
-        off_t offset)
+size_t gdpfs_file_write(uint64_t fd, const char *buf, size_t size, off_t offset)
 {
     size_t file_size;
     size_t current_size;
     size_t potential_size;
-
-    current_size = gdpfs_file_size(file);
+    
+    current_size = gdpfs_file_size(fd);
     potential_size = offset + size;
     file_size = max(current_size, potential_size);
 
-    return do_write(file, file_size, buf, size, offset);
+    return do_write(fd, file_size, buf, size, offset);
 }
 
-int gdpfs_file_ftruncate(gdpfs_file_t *file, size_t file_size)
+int gdpfs_file_ftruncate(uint64_t fd, size_t file_size)
 {
-    return do_write(file, file_size, NULL, 0, 0);
+    return do_write(fd, file_size, NULL, 0, 0);
 }
 
-size_t gdpfs_file_size(gdpfs_file_t *file)
+size_t gdpfs_file_size(uint64_t fd)
 {
     EP_STAT estat;
+    gdpfs_file_t *file;
     size_t size;
     gdpfs_fmeta_t curr_entry;
     gdpfs_log_ent_t *log_ent;
+
+    file = lookup_fd(fd);
+    if (file == NULL)
+        return 0;
 
     estat = gdpfs_log_ent_open(file->log_handle, &log_ent, -1);
     if (!EP_STAT_ISOK(estat))

@@ -59,9 +59,9 @@ int bitmap_release(bitmap_t *bmp, uint64_t val)
     off_t bit;
 
     if (!bmp)
-        return -3;
+        return -1;
     if (val > bmp->size)
-        return -2;
+        return -1;
     byte = val / 8;
     bit = val % 8;
     field = bmp->data[byte];
@@ -69,6 +69,20 @@ int bitmap_release(bitmap_t *bmp, uint64_t val)
         return -1;
     bmp->data[byte] &= ~(1 << bit);
     return 0;
+}
+
+int bitmap_is_set(bitmap_t *bmp, uint64_t val)
+{
+    off_t byte;
+    off_t bit;
+
+    if (!bmp)
+        return -1;
+    if (val > bmp->size)
+        return -1;
+    byte = val / 8;
+    bit = val % 8;
+    return (bmp->data[byte] >> bit) & 1;    
 }
 
 void bitmap_free(bitmap_t *bmp)
