@@ -28,22 +28,25 @@ struct gdpfs_entry
 
 typedef struct gdpfs_entry gdpfs_entry_t;
 
-static char *log_path;
 static bool ro_mode = false;
-static uint64_t root_fh;
+static uint64_t root_fh_ = 0;
+static gdpfs_file_mode_t mode;
 
 static int
 gdpfs_getattr(const char *path, struct stat *stbuf)
 {
     EP_STAT estat;
     gdpfs_dir_entry_t ent;
-    int res = 0;
+    int res;
+    uint64_t fh;
 
+    res = 0;
     memset(stbuf, 0, sizeof(struct stat));
     if (strcmp(path, "/") == 0)
     {
+        stbuf->st_size = gdpfs_file_size(root_fh_);
         stbuf->st_mode = S_IFDIR | 0555;
-        stbuf->st_nlink = 2;
+        //stbuf->st_nlink = 2;
     }
     else
     {
@@ -51,7 +54,7 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
         res = -ENOENT;
         while(res != 0)
         {
-            estat = gdpfs_dir_read(root_fh, &ent, ent.offset);
+            estat = gdpfs_dir_read(root_fh_, &ent, ent.offset);
             if (EP_STAT_IS_SAME(estat, GDPFS_STAT_EOF))
             {
                 break;
@@ -63,12 +66,20 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
             }
             if (strcmp(path + 1, ent.name) == 0)
             {
+                fh = gdpfs_dir_open_path(&estat, path, mode, GDPFS_FILE_TYPE_REGULAR);
+                if (!EP_STAT_ISOK(estat))
+                {
+                    ep_app_error("couldn't open %s", path);
+                    continue;
+                }
                 stbuf->st_mode = S_IFREG | (ro_mode ? 0444 : 0644);
                 stbuf->st_nlink = 1;
-                stbuf->st_size = gdpfs_file_size(root_fh);
+                stbuf->st_size = 12;
+                stbuf->st_size = gdpfs_file_size(fh);
                 stbuf->st_uid = getuid();
                 stbuf->st_gid = getgid();
                 res = 0;
+                gdpfs_dir_close(fh);
             }
         }
     }
@@ -76,39 +87,60 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
 }
 
 static int
+open_(const char *path, uint64_t *fh)
+{
+    EP_STAT estat;
+
+    *fh = gdpfs_dir_open_path(&estat, path, mode, GDPFS_FILE_TYPE_REGULAR);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to open file at path:\"%s\"", path);
+        return -ENOENT;
+    }
+    printf("open not yet impleented %lu\n", *fh);
+    return 0;
+}
+
+static int
 gdpfs_open(const char *path, struct fuse_file_info *fi)
 {
-    if (strcmp(path, log_path) != 0)
-        return -ENOENT;
-    printf("open not yet impleented\n");
-    return 0;
+    return open_(path, &fi->fh);
 }
 
 static int
 gdpfs_opendir(const char *path, struct fuse_file_info *fi)
 {
-    if (strcmp(path, "/") != 0)
+    EP_STAT estat;
+
+    fi->fh = gdpfs_dir_open_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to opendir at path:\"%s\"", path);
         return -ENOENT;
-    fi->fh = root_fh;
-    printf("opendir\n");
+    }
+    printf("opendir %lu\n", fi->fh);
+    return 0;
+}
+
+static int
+release_(const char *path, uint64_t fh)
+{
+    (void)path;
+    gdpfs_file_close(fh);
     return 0;
 }
 
 static int
 gdpfs_release(const char *path, struct fuse_file_info *fi)
 {
-    if (strcmp(path, log_path) != 0)
-        return -ENOENT;
-    printf("closing\n");
-    return 0;
+    return release_(path, fi->fh);
 }
 
 static int
 gdpfs_releasedir(const char *path, struct fuse_file_info *fi)
 {
-    if (strcmp(path, log_path) != 0)
-        return -ENOENT;
     printf("closing dir\n");
+    gdpfs_dir_close(fi->fh);
     return 0;
 }
 
@@ -116,9 +148,7 @@ static int
 gdpfs_read(const char *path, char *buf, size_t size, off_t offset,
            struct fuse_file_info *fi)
 {
-    (void) fi;
-    if(strcmp(path, log_path) != 0)
-        return -ENOENT;
+    (void)path;
     return gdpfs_file_read(fi->fh, buf, size, offset);
 }
 
@@ -170,39 +200,95 @@ static int
 gdpfs_write(const char *path, const char *buf, size_t size, off_t offset,
             struct fuse_file_info *fi)
 {
-    if(strcmp(path, log_path) != 0)
-        return -ENOENT;
+    (void)path;
+    printf("buf:%s fh:%lu size:%lu offset:%lu\n", buf, fi->fh, size, offset);
     return gdpfs_file_write(fi->fh, buf, size, offset);
 }
 
 static int
-gdpfs_truncate(const char *path, off_t file_size)
+gdpfs_truncate(const char *file, off_t file_size)
 {
-    if(strcmp(path, log_path) != 0)
-        return -ENOENT;
-    return gdpfs_file_ftruncate(root_fh, file_size);
+    int res;
+    uint64_t fh;
+
+    printf("Truncate. THIS IS A HACK! File:\"%s\"\n", file);
+    /*
+    if ((res = open_(file, &fh)) != 0)
+        return res;
+    res = gdpfs_file_ftruncate(fh, file_size);
+    res = release_(file, fh) || res;
+    return res;
+    */
+    return gdpfs_file_ftruncate(1, file_size);
 }
 
 static int
-gdpfs_ftruncate(const char *path, off_t file_size, struct fuse_file_info *fi)
+gdpfs_ftruncate(const char *file, off_t file_size, struct fuse_file_info *fi)
 {
-    (void)fi;
-    if(strcmp(path, log_path) != 0)
-        return -ENOENT;
+    (void)file;
     return gdpfs_file_ftruncate(fi->fh, file_size);
 }
 
 static int
-gdpfs_create(const char *file, mode_t mode, struct fuse_file_info *info)
+gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
 {
     EP_STAT estat;
-    printf("adding %s (trash this print)\n", file);
-    estat = gdpfs_dir_add(root_fh, file + 1, NULL);
-    // TODO: open the file
-    if (EP_STAT_ISOK(estat))
-        return 0;
-    else
+    uint64_t fh;
+    char *path;
+    char *file;
+    int i;
+
+    if (filepath[0] != '/')
         return -ENOENT;
+
+    path = ep_mem_zalloc(strlen(filepath) + 1);
+    if (!path)
+    {
+        goto fail0;
+    }
+    strncpy(path, filepath, strlen(filepath) + 1);
+    for (i = strlen(path); i >= 0; i--)
+    {
+        if (path[i] == '/')
+            break;
+    }
+    file = path + i + 1;
+    path[i] = '\0';
+
+    printf("adding %s (trash this print)\n", filepath);
+    fh = gdpfs_dir_open_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to open dir at path:\"%s\"", path);
+        goto fail0;
+    }
+    estat = gdpfs_dir_add(fh, file, NULL);
+    gdpfs_dir_close(fh);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to add file:\"%s\"", filepath);
+        goto fail0;
+    }
+    fi->fh = gdpfs_file_open_init(&estat, file, mode, GDPFS_FILE_TYPE_REGULAR, true);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to initialize file:\"%s\"", filepath);
+        goto fail0;
+    }
+
+    ep_mem_free(path);
+    return 0;
+
+fail0:
+    ep_mem_free(path);
+    return -ENOENT;
+}
+
+static int
+gdpfs_unlink(const char *file)
+{
+    printf("Unlink not implemented. File:\"%s\"\n", file);
+    return 0;
 }
 
 static int
@@ -245,6 +331,7 @@ static struct fuse_operations gdpfs_oper = {
     .truncate       = gdpfs_truncate,
     .ftruncate      = gdpfs_ftruncate,
     .create         = gdpfs_create,
+    .unlink         = gdpfs_unlink,
     .mkdir          = gdpfs_mkdir,
     .chmod          = gdpfs_chmod,
     .chown          = gdpfs_chown,
@@ -255,7 +342,7 @@ int gdpfs_run(char *root_log, bool ro, int fuse_argc, char *fuse_argv[])
 {
     EP_STAT estat;
     int ret;
-    gdpfs_file_mode_t mode;
+    
 
     ro_mode = ro;
     if (ro)
@@ -263,25 +350,13 @@ int gdpfs_run(char *root_log, bool ro, int fuse_argc, char *fuse_argv[])
     else
         mode = GDPFS_FILE_MODE_RW;
     
-    // TODO: trash this
-    log_path = malloc(sizeof(char) * (2 + strlen(root_log)));
-    log_path[0] = '/';
-    strcpy(log_path + 1, root_log);
-
+    // need to init file before dir
     estat = init_gdpfs_file();
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
-    /*
     estat = init_gdpfs_dir(root_log, mode);
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
-    */
-    root_fh = gdpfs_file_open_init(&estat, root_log, mode, GDPFS_FILE_TYPE_DIR, false);
-    if (!EP_STAT_ISOK(estat) || root_fh == (uint64_t)-1)
-    {
-        ep_app_error("unable to open the root");
-        exit(EX_UNAVAILABLE);
-    }
 
     // TODO: properly close resources after fuse runs.
     ret = fuse_main(fuse_argc, fuse_argv, &gdpfs_oper, NULL);
@@ -291,6 +366,6 @@ int gdpfs_run(char *root_log, bool ro, int fuse_argc, char *fuse_argv[])
 
 void gdpfs_stop()
 {
-    gdpfs_file_close(root_fh);
-    free(log_path);
+    stop_gdpfs_dir();
+    stop_gdpfs_file();
 }

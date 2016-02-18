@@ -58,7 +58,7 @@ EP_STAT gdpfs_log_open(gdpfs_log_t **handle, char *log_name, gdpfs_log_mode_t mo
         return GDPFS_STAT_INVLDPARAM;
     }
     *handle = ep_mem_zalloc(sizeof(gdpfs_log_t));
-    if (handle == NULL)
+    if (*handle == NULL)
     {
         return GDPFS_STAT_OOMEM;
     }
@@ -72,16 +72,13 @@ EP_STAT gdpfs_log_open(gdpfs_log_t **handle, char *log_name, gdpfs_log_mode_t mo
         goto fail0;
     }
     // TODO: better size protection?
-    memcpy((*handle)->gname, gcl_name, sizeof((*handle)->gname) * sizeof((*handle)->gname));
+    memcpy((*handle)->gname, gcl_name, sizeof((*handle)->gname) * sizeof(*(*handle)->gname));
 
     return estat;
 
 fail0:
-    if (handle)
-    {
-        ep_mem_free(handle);
-        *handle = NULL;
-    }
+    ep_mem_free(*handle);
+    *handle = NULL;
     return estat;
 }
 

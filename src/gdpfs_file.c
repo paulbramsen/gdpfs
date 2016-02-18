@@ -410,7 +410,7 @@ static gdpfs_file_t *lookup_fh(uint64_t fh)
     return files[fh];
 }
 
-// TODO: generalize this stuff into a log read meta styel function
+// TODO: generalize this stuff into a log read meta style function
 static gdpfs_file_type_t file_type(uint64_t fh)
 {
     EP_STAT estat;
