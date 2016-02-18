@@ -1,12 +1,13 @@
 #include "gdpfs_log.h"
 
 #include "gdpfs_stat.h"
-#include <gdp/gdp.h>
 #include <ep/ep_app.h>
+#include <string.h>
 
 struct gdpfs_log
 {
     gdp_gcl_t *gcl_handle;
+    gdpfs_log_gname_t gname;
 };
 
 struct gdpfs_log_ent
@@ -27,7 +28,7 @@ EP_STAT init_gdpfs_log()
     return estat;
 }
 
-EP_STAT gdpfs_log_open(gdpfs_log_t **handle, char *log_name, bool ro_mode)
+EP_STAT gdpfs_log_open(gdpfs_log_t **handle, char *log_name, gdpfs_log_mode_t mode)
 {
     EP_STAT estat;
     gdp_name_t gcl_name;
@@ -42,7 +43,20 @@ EP_STAT gdpfs_log_open(gdpfs_log_t **handle, char *log_name, bool ro_mode)
     }
 
     // open the GCL
-    gcl_mode = ro_mode ? GDP_MODE_RO : GDP_MODE_RA;
+    switch (mode)
+    {
+    case GDPFS_LOG_MODE_RO:
+        gcl_mode = GDP_MODE_RO;
+        break;    
+    case GDPFS_LOG_MODE_RA:
+        gcl_mode = GDP_MODE_RA;
+        break;
+    case GDPFS_LOG_MODE_AO:
+        gcl_mode = GDP_MODE_AO;
+        break;
+    default:
+        return GDPFS_STAT_INVLDPARAM;
+    }
     *handle = ep_mem_zalloc(sizeof(gdpfs_log_t));
     if (handle == NULL)
     {
@@ -57,6 +71,8 @@ EP_STAT gdpfs_log_open(gdpfs_log_t **handle, char *log_name, bool ro_mode)
             ep_stat_tostr(estat, sbuf, sizeof sbuf));
         goto fail0;
     }
+    // TODO: better size protection?
+    memcpy((*handle)->gname, gcl_name, sizeof((*handle)->gname) * sizeof((*handle)->gname));
 
     return estat;
 
@@ -97,6 +113,11 @@ EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent)
             ep_stat_tostr(estat, sbuf, sizeof sbuf));
     }
     return estat;
+}
+
+void gdpfs_log_gname(gdpfs_log_t *handle, gdpfs_log_gname_t gname)
+{
+     memcpy(gname, handle->gname, sizeof(gname) * sizeof(gname[0]));
 }
 
 gdpfs_log_ent_t *gdpfs_log_ent_new()
