@@ -26,10 +26,10 @@ typedef gdpfs_log_gname_t gdpfs_file_gname_t;
 EP_STAT init_gdpfs_file();
 void stop_gdpfs_file();
 uint64_t gdpfs_file_open(EP_STAT *ret_stat, char *name, gdpfs_file_mode_t mode);
-uint64_t gdpfs_file_open_type(EP_STAT *ret_stat, char *name,
+uint64_t gdpfs_file_open_type(EP_STAT *ret_stat, char *log_name,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type);
 // strict_init causes failure if file is not TYPE_NEW
-uint64_t gdpfs_file_open_init(EP_STAT *ret_stat, char *name,
+uint64_t gdpfs_file_open_init(EP_STAT *ret_stat, char *log_name,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type, bool strict_init);
 EP_STAT gdpfs_file_close(uint64_t fh);
 size_t gdpfs_file_read(uint64_t fh, void *buf, size_t size, off_t offset);

@@ -29,7 +29,6 @@ struct gdpfs_entry
 typedef struct gdpfs_entry gdpfs_entry_t;
 
 static bool ro_mode = false;
-static uint64_t root_fh_ = 0;
 static gdpfs_file_mode_t mode;
 
 static int
@@ -39,12 +38,13 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
     gdpfs_dir_entry_t ent;
     int res;
     uint64_t fh;
+    uint64_t dir_fh;
 
     res = 0;
     memset(stbuf, 0, sizeof(struct stat));
     if (strcmp(path, "/") == 0)
     {
-        stbuf->st_size = gdpfs_file_size(root_fh_);
+        //stbuf->st_size = gdpfs_file_size(root_fh_);
         stbuf->st_mode = S_IFDIR | 0555;
         //stbuf->st_nlink = 2;
     }
@@ -52,9 +52,17 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
     {
         ent.offset = 0;
         res = -ENOENT;
+        // TODO: fix this. Use actual directory.
+        dir_fh = gdpfs_dir_open_path(&estat, "/", mode, GDPFS_FILE_TYPE_REGULAR);
+        if (!EP_STAT_ISOK(estat))
+        {
+            ep_app_error("failed to open dir");
+        }
+        
         while(res != 0)
         {
-            estat = gdpfs_dir_read(root_fh_, &ent, ent.offset);
+            estat = gdpfs_dir_read(dir_fh, &ent, ent.offset);
+        
             if (EP_STAT_IS_SAME(estat, GDPFS_STAT_EOF))
             {
                 break;
@@ -82,6 +90,7 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
                 gdpfs_dir_close(fh);
             }
         }
+        gdpfs_dir_close(dir_fh);
     }
     return res;
 }
@@ -208,18 +217,18 @@ gdpfs_write(const char *path, const char *buf, size_t size, off_t offset,
 static int
 gdpfs_truncate(const char *file, off_t file_size)
 {
+    /*
     int res;
     uint64_t fh;
 
-    printf("Truncate. THIS IS A HACK! File:\"%s\"\n", file);
-    /*
     if ((res = open_(file, &fh)) != 0)
         return res;
     res = gdpfs_file_ftruncate(fh, file_size);
     res = release_(file, fh) || res;
     return res;
     */
-    return gdpfs_file_ftruncate(1, file_size);
+    printf("Truncate not yet implemented\n");
+    return 0;
 }
 
 static int

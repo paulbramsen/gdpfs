@@ -3,6 +3,7 @@
 #include "gdpfs.h"
 
 #include <ep/ep_app.h>
+#include <ep/ep_hash.h>
 #include <string.h>
 
 #include "bitmap.h"
@@ -23,6 +24,8 @@ struct gdpfs_file
 {
     gdpfs_log_t *log_handle;
     gdpfs_file_mode_t mode;
+    char *hash_key;
+    uint32_t ref_count;
 };
 typedef struct gdpfs_file gdpfs_file_t;
 
@@ -39,7 +42,7 @@ typedef struct gdpfs_fmeta gdpfs_fmeta_t;
 #define MAX_FHS 256
 static bitmap_t *fhs;
 static gdpfs_file_t **files;
-
+static EP_HASH *file_hash;
 
 // Private Functions 
 static size_t do_write(uint64_t fh, size_t file_size, const char *buf,
@@ -58,6 +61,9 @@ EP_STAT init_gdpfs_file()
     fhs = bitmap_create(MAX_FHS);
     if (fhs == NULL)
         goto failoom;
+    file_hash = ep_hash_new("file_hash", NULL, MAX_FHS);
+    if (file_hash == NULL)
+        goto failoom;
     estat = init_gdpfs_log();
     return estat;
 
@@ -69,11 +75,13 @@ failoom:
 
 void stop_gdpfs_file()
 {
+    ep_hash_free(file_hash);
     bitmap_free(fhs);
     // TODO: close the log
 }
 
-static uint64_t open_file(EP_STAT *ret_stat, char *name, gdpfs_file_mode_t mode,
+// TODO: make log_name the global name
+static uint64_t open_file(EP_STAT *ret_stat, char *log_name, gdpfs_file_mode_t mode,
         gdpfs_file_type_t type, bool init, bool strict_init)
 {
     EP_STAT stat;
@@ -94,7 +102,9 @@ static uint64_t open_file(EP_STAT *ret_stat, char *name, gdpfs_file_mode_t mode,
         log_mode = GDPFS_LOG_MODE_AO;
         break;
     default:
-        goto fail2;
+        if (ret_stat)
+            *ret_stat = GDPFS_STAT_INVLDPARAM;
+        goto fail1;
     }
 
     fh = bitmap_reserve(fhs);
@@ -103,20 +113,38 @@ static uint64_t open_file(EP_STAT *ret_stat, char *name, gdpfs_file_mode_t mode,
         stat = GDPFS_STAT_OOMEM;
         goto fail1;
     }
-    file = ep_mem_zalloc(sizeof(gdpfs_file_t));
+
+    // TODO: use the mode as part of the key
+    // check if the file is already open and in the hash
+    file = ep_hash_search(file_hash, strlen(log_name), log_name);
+
     if (!file)
     {
-        stat = GDPFS_STAT_OOMEM;
-        goto fail0;
+        // if the file is not yet in the cash, we need to create it
+        file = ep_mem_zalloc(sizeof(gdpfs_file_t));
+        if (!file)
+        {
+            stat = GDPFS_STAT_OOMEM;
+            goto fail0;
+        }
+        ep_hash_insert(file_hash, strlen(log_name), log_name, file);
+        stat = gdpfs_log_open(&file->log_handle, log_name, log_mode);
+        if (!EP_STAT_ISOK(stat))
+        {
+            goto fail0;
+        }
+        file->mode = mode;
+        file->hash_key = ep_mem_zalloc(strlen(log_name) + 1);
+        if (!file->hash_key)
+        {
+            stat = GDPFS_STAT_OOMEM;
+            goto fail0;
+        }
+        strcpy(file->hash_key, log_name);
+        if (ret_stat != NULL)
+            *ret_stat = stat;
     }
-    stat = gdpfs_log_open(&file->log_handle, name, log_mode);
-    if (!EP_STAT_ISOK(stat))
-    {
-        goto fail0;
-    }
-    file->mode = mode;
-    if (ret_stat != NULL)
-        *ret_stat = stat;
+    file->ref_count++;
     files[fh] = file;
 
     // check type and initialize if necessary
@@ -144,11 +172,9 @@ static uint64_t open_file(EP_STAT *ret_stat, char *name, gdpfs_file_mode_t mode,
 fail0:
     files[fh] = NULL;
     bitmap_release(fhs, fh);
-fail1:
+    ep_mem_free(file->hash_key);
     ep_mem_free(file);
-    if (ret_stat != NULL)
-        *ret_stat = stat;
-fail2:
+fail1:
     return -1;
 }
 
@@ -177,11 +203,15 @@ EP_STAT gdpfs_file_close(uint64_t fh)
     file = lookup_fh(fh);
     if (file == NULL)
         return GDPFS_STAT_BADFH;
-
-    estat = gdpfs_log_close(file->log_handle);
-    ep_mem_free(file);
     bitmap_release(fhs, fh);
 
+    if (--file->ref_count == 0)
+    {
+        ep_hash_delete(file_hash, strlen(file->hash_key), file->hash_key);
+        estat = gdpfs_log_close(file->log_handle);
+        ep_mem_free(file->hash_key);
+        ep_mem_free(file);
+    }    
     return estat;
 }
 

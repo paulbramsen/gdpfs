@@ -4,7 +4,7 @@
 #include <ep/ep_app.h>
 #include <string.h>
 
-static uint64_t root_fh;
+static char *root_log_gname;
 
 struct gdpfs_dir_entry_phys
 {
@@ -17,14 +17,26 @@ typedef struct gdpfs_dir_entry_phys gdpfs_dir_entry_phys_t;
 EP_STAT init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode)
 {
     EP_STAT estat;
+    uint64_t fh;
 
-    root_fh = gdpfs_file_open_init(&estat, root_log, mode, GDPFS_FILE_TYPE_DIR, false);
+    root_log_gname = ep_mem_zalloc(strlen(root_log) + 1);
+    if (!root_log_gname)
+    {
+        return GDPFS_STAT_OOMEM;
+    }
+    strcpy(root_log_gname, root_log);
+    // innitialize the root log
+    fh = gdpfs_file_open_init(&estat, root_log, mode, GDPFS_FILE_TYPE_DIR, false);
+    if (EP_STAT_ISOK(estat))
+    {
+        gdpfs_file_close(fh);
+    }
     return estat;
 }
 
 void stop_gdpfs_dir()
 {
-    gdpfs_file_close(root_fh);
+    ep_mem_free(root_log_gname);
 }
 
 uint64_t gdpfs_dir_open_path(EP_STAT *ret_stat, const char *path,
@@ -47,7 +59,7 @@ uint64_t gdpfs_dir_open_path(EP_STAT *ret_stat, const char *path,
         return -1;
     }
 
-    fh = root_fh;
+    fh = gdpfs_file_open_type(&estat, root_log_gname, mode, GDPFS_FILE_TYPE_DIR);
     curr_type = GDPFS_FILE_TYPE_DIR;
     while (path[0] != '\0')
     {
@@ -83,8 +95,7 @@ uint64_t gdpfs_dir_open_path(EP_STAT *ret_stat, const char *path,
             } while(!phys_ent.in_use || strcmp(phys_ent.name, name) != 0);
             if (path[0] == '\0')
                 curr_type = type;
-            if (fh != root_fh)
-                gdpfs_file_close(fh);
+            gdpfs_file_close(fh);
             // TODO: needs to open gname, not name
             fh = gdpfs_file_open_type(&estat, phys_ent.name, mode, curr_type);
             if (!EP_STAT_ISOK(estat))
@@ -99,19 +110,13 @@ uint64_t gdpfs_dir_open_path(EP_STAT *ret_stat, const char *path,
         *ret_stat = EP_STAT_OK;
     return fh;
 fail0:
-    if (fh != root_fh)
-        gdpfs_file_close(fh);
+    gdpfs_file_close(fh);
     return -1;
 }
 
 EP_STAT gdpfs_dir_close(uint64_t fd)
 {
-    if (fd != root_fh)
-    {
-        return gdpfs_file_close(fd);
-    }
-    ep_app_warn("Attempt to close root_fh. Ignoring.");
-    return EP_STAT_OK;
+    return gdpfs_file_close(fd);
 }
 
 EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, const char *log)
