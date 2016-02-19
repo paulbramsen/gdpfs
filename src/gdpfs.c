@@ -28,7 +28,6 @@ struct gdpfs_entry
 
 typedef struct gdpfs_entry gdpfs_entry_t;
 
-static bool ro_mode = false;
 static gdpfs_file_mode_t mode;
 
 static int
@@ -80,7 +79,19 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
                     ep_app_error("couldn't open %s", path);
                     continue;
                 }
-                stbuf->st_mode = S_IFREG | (ro_mode ? 0444 : 0644);
+                stbuf->st_mode = S_IFREG;
+                switch (mode)
+                {
+                case GDPFS_FILE_MODE_RO:
+                    stbuf->st_mode |= 0444;
+                    break;    
+                case GDPFS_FILE_MODE_RW:
+                    stbuf->st_mode |= 0644;
+                    break;
+                case GDPFS_FILE_MODE_WO:
+                    stbuf->st_mode |= 0200;
+                    break;
+                }
                 stbuf->st_nlink = 1;
                 stbuf->st_size = 12;
                 stbuf->st_size = gdpfs_file_size(fh);
@@ -217,7 +228,6 @@ gdpfs_write(const char *path, const char *buf, size_t size, off_t offset,
 static int
 gdpfs_truncate(const char *file, off_t file_size)
 {
-    /*
     int res;
     uint64_t fh;
 
@@ -226,9 +236,6 @@ gdpfs_truncate(const char *file, off_t file_size)
     res = gdpfs_file_ftruncate(fh, file_size);
     res = release_(file, fh) || res;
     return res;
-    */
-    printf("Truncate not yet implemented\n");
-    return 0;
 }
 
 static int
@@ -352,8 +359,6 @@ int gdpfs_run(char *root_log, bool ro, int fuse_argc, char *fuse_argv[])
     EP_STAT estat;
     int ret;
     
-
-    ro_mode = ro;
     if (ro)
         mode = GDPFS_FILE_MODE_RO;
     else
