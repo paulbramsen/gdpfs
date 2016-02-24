@@ -19,7 +19,10 @@ uint64_t gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type);
 uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *path,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type);
+uint64_t gdpfs_dir_remove_file_at_path(EP_STAT *ret_stat, const char *path,
+        gdpfs_file_mode_t mode, gdpfs_file_type_t type);
 EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, const char *log);
+EP_STAT gdpfs_dir_remove(uint64_t fh, const char *name);
 EP_STAT gdpfs_dir_read(uint64_t fh, gdpfs_dir_entry_t *ent, off_t offset);
 
 #endif // _GDPFS_DIR_H_

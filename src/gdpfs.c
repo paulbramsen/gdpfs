@@ -256,9 +256,21 @@ gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
 }
 
 static int
-gdpfs_unlink(const char *file)
+gdpfs_unlink(const char *filepath)
 {
-    printf("Unlink not implemented. File:\"%s\"\n", file);
+    EP_STAT estat;
+    uint64_t fh;
+
+    if (strlen(filepath) == 0)
+        return -ENOENT;
+
+    fh = gdpfs_dir_remove_file_at_path(&estat, filepath, mode, GDPFS_FILE_TYPE_REGULAR);
+    if (!EP_STAT_ISOK(estat))
+    {
+        return -ENOENT;
+    }
+    gdpfs_file_close(fh);
+
     return 0;
 }
 
@@ -280,6 +292,32 @@ gdpfs_mkdir(const char *filepath, mode_t mode_)
     }
     gdpfs_file_close(fh);
 
+    return 0;
+}
+
+static int
+gdpfs_rmdir(const char *filepath)
+{
+    EP_STAT estat;
+    uint64_t fh;
+
+    if (strlen(filepath) == 0)
+        return -ENOENT;
+
+    fh = gdpfs_dir_remove_file_at_path(&estat, filepath, mode, GDPFS_FILE_TYPE_DIR);
+    if (!EP_STAT_ISOK(estat))
+    {
+        return -ENOENT;
+    }
+    gdpfs_file_close(fh);
+
+    return 0;
+}
+
+static int
+gdpfs_rename(const char *filepath1, const char *filepath2)
+{
+    printf("Rename not implemented. fp1:\"%s\" fp2:\"%s\"\n", filepath1, filepath2);
     return 0;
 }
 
@@ -318,6 +356,8 @@ static struct fuse_operations gdpfs_oper = {
     .create         = gdpfs_create,
     .unlink         = gdpfs_unlink,
     .mkdir          = gdpfs_mkdir,
+    .rmdir          = gdpfs_rmdir,
+    .rename         = gdpfs_rename,
     .chmod          = gdpfs_chmod,
     .chown          = gdpfs_chown,
     .utimens        = gdpfs_utimens,
