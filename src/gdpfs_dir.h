@@ -15,9 +15,10 @@ typedef struct gdpfs_dir_entry gdpfs_dir_entry_t;
 
 EP_STAT init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode);
 void stop_gdpfs_dir();
-uint64_t gdpfs_dir_open_path(EP_STAT *ret_stat, const char *path,
+uint64_t gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type);
-EP_STAT gdpfs_dir_close(uint64_t fh);
+uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *path,
+        gdpfs_file_mode_t mode, gdpfs_file_type_t type);
 EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, const char *log);
 EP_STAT gdpfs_dir_read(uint64_t fh, gdpfs_dir_entry_t *ent, off_t offset);
 

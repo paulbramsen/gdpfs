@@ -2,6 +2,7 @@
 #include "gdpfs_stat.h"
 
 #include <ep/ep_app.h>
+#include <libgen.h>
 #include <string.h>
 
 static char *root_log_gname;
@@ -39,7 +40,7 @@ void stop_gdpfs_dir()
     ep_mem_free(root_log_gname);
 }
 
-uint64_t gdpfs_dir_open_path(EP_STAT *ret_stat, const char *path,
+uint64_t gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type)
 {
     EP_STAT estat;
@@ -114,9 +115,69 @@ fail0:
     return -1;
 }
 
-EP_STAT gdpfs_dir_close(uint64_t fd)
+uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *filepath,
+        gdpfs_file_mode_t mode, gdpfs_file_type_t type)
 {
-    return gdpfs_file_close(fd);
+    EP_STAT estat;
+    uint64_t fh;
+    char *path, *file;
+    char *path_mem, *file_mem;
+
+    if (filepath[0] != '/')
+    {
+        if (ret_stat)
+            *ret_stat = GDPFS_STAT_BADPATH;
+        return -1;
+    }
+
+    path_mem = ep_mem_zalloc(strlen(filepath) + 1);
+    file_mem = ep_mem_zalloc(strlen(filepath) + 1);
+    if (!path_mem || !file_mem)
+    {
+        if (ret_stat)
+            *ret_stat = GDPFS_STAT_OOMEM;
+        goto fail0;
+    }
+    strncpy(path_mem, filepath, strlen(filepath) + 1);
+    strncpy(file_mem, filepath, strlen(filepath) + 1);
+    path = dirname(path_mem);
+    file = basename(file_mem);
+
+    printf("adding %s (trash this print)\n", filepath);
+    fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
+    if (!EP_STAT_ISOK(estat))
+    {
+        if (ret_stat)
+            *ret_stat = estat;
+        ep_app_error("Failed to open dir at path:\"%s\"", path);
+        goto fail0;
+    }
+    estat = gdpfs_dir_add(fh, file, NULL);
+    gdpfs_file_close(fh);
+    if (!EP_STAT_ISOK(estat))
+    {
+        if (ret_stat)
+            *ret_stat = estat;
+        ep_app_error("Failed to add file:\"%s\"", filepath);
+        goto fail0;
+    }
+    fh = gdpfs_file_open_init(&estat, file, mode, type, true);
+    if (!EP_STAT_ISOK(estat))
+    {
+        if (ret_stat)
+            *ret_stat = estat;
+        ep_app_error("Failed to initialize file:\"%s\"", filepath);
+        goto fail0;
+    }
+
+    ep_mem_free(path_mem);
+    ep_mem_free(file_mem);
+    return fh;
+
+fail0:
+    ep_mem_free(path_mem);
+    ep_mem_free(file_mem);
+    return -1;
 }
 
 EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, const char *log)

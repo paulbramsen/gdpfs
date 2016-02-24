@@ -34,76 +34,68 @@ static int
 gdpfs_getattr(const char *path, struct stat *stbuf)
 {
     EP_STAT estat;
-    gdpfs_dir_entry_t ent;
-    int res;
+    gdpfs_file_info_t info;
     uint64_t fh;
-    uint64_t dir_fh;
 
-    res = 0;
+    fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_UNKNOWN);
+    if (!EP_STAT_ISOK(estat))
+        return -ENOENT;
+    info = gdpfs_file_info(fh, &estat);
+    if (!EP_STAT_ISOK(estat))
+        goto fail0;
+    
     memset(stbuf, 0, sizeof(struct stat));
-    if (strcmp(path, "/") == 0)
+    stbuf->st_nlink = 1; // TODO: figure out a sane value for this
+    stbuf->st_size = info.size;
+    stbuf->st_uid = getuid();
+    stbuf->st_gid = getgid();
+    if (info.type == GDPFS_FILE_TYPE_REGULAR)
     {
-        //stbuf->st_size = gdpfs_file_size(root_fh_);
-        stbuf->st_mode = S_IFDIR | 0555;
-        //stbuf->st_nlink = 2;
+        stbuf->st_mode = S_IFREG;
+        switch (mode)
+        {
+        case GDPFS_FILE_MODE_RO:
+            stbuf->st_mode |= 0544;
+            break;    
+        case GDPFS_FILE_MODE_RW:
+            stbuf->st_mode |= 0744;
+            break;
+        case GDPFS_FILE_MODE_WO:
+            stbuf->st_mode |= 0200;
+            break;
+        default:
+            goto fail0;
+        }
+    }
+    else if (info.type == GDPFS_FILE_TYPE_DIR)
+    {
+        stbuf->st_mode = S_IFDIR;
+        switch (mode)
+        {
+        case GDPFS_FILE_MODE_RO:
+            stbuf->st_mode |= 0555;
+            break;    
+        case GDPFS_FILE_MODE_RW:
+            stbuf->st_mode |= 0755;
+            break;
+        case GDPFS_FILE_MODE_WO:
+            stbuf->st_mode |= 0200;
+            break;
+        default:
+            goto fail0;
+        }
     }
     else
     {
-        ent.offset = 0;
-        res = -ENOENT;
-        // TODO: fix this. Use actual directory.
-        dir_fh = gdpfs_dir_open_path(&estat, "/", mode, GDPFS_FILE_TYPE_REGULAR);
-        if (!EP_STAT_ISOK(estat))
-        {
-            ep_app_error("failed to open dir");
-        }
-        
-        while(res != 0)
-        {
-            estat = gdpfs_dir_read(dir_fh, &ent, ent.offset);
-        
-            if (EP_STAT_IS_SAME(estat, GDPFS_STAT_EOF))
-            {
-                break;
-            }
-            if (!EP_STAT_ISOK(estat))
-            {
-                ep_app_error("couldn't read root dir");
-                break;
-            }
-            if (strcmp(path + 1, ent.name) == 0)
-            {
-                fh = gdpfs_dir_open_path(&estat, path, mode, GDPFS_FILE_TYPE_REGULAR);
-                if (!EP_STAT_ISOK(estat))
-                {
-                    ep_app_error("couldn't open %s", path);
-                    continue;
-                }
-                stbuf->st_mode = S_IFREG;
-                switch (mode)
-                {
-                case GDPFS_FILE_MODE_RO:
-                    stbuf->st_mode |= 0444;
-                    break;    
-                case GDPFS_FILE_MODE_RW:
-                    stbuf->st_mode |= 0644;
-                    break;
-                case GDPFS_FILE_MODE_WO:
-                    stbuf->st_mode |= 0200;
-                    break;
-                }
-                stbuf->st_nlink = 1;
-                stbuf->st_size = 12;
-                stbuf->st_size = gdpfs_file_size(fh);
-                stbuf->st_uid = getuid();
-                stbuf->st_gid = getgid();
-                res = 0;
-                gdpfs_dir_close(fh);
-            }
-        }
-        gdpfs_dir_close(dir_fh);
+        goto fail0;
     }
-    return res;
+
+    gdpfs_file_close(fh);
+    return 0;
+
+fail0:
+    gdpfs_file_close(fh);
+    return -ENOENT;
 }
 
 static int
@@ -111,7 +103,7 @@ open_(const char *path, uint64_t *fh)
 {
     EP_STAT estat;
 
-    *fh = gdpfs_dir_open_path(&estat, path, mode, GDPFS_FILE_TYPE_REGULAR);
+    *fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_REGULAR);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to open file at path:\"%s\"", path);
@@ -132,7 +124,7 @@ gdpfs_opendir(const char *path, struct fuse_file_info *fi)
 {
     EP_STAT estat;
 
-    fi->fh = gdpfs_dir_open_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
+    fi->fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to opendir at path:\"%s\"", path);
@@ -160,7 +152,7 @@ static int
 gdpfs_releasedir(const char *path, struct fuse_file_info *fi)
 {
     printf("closing dir\n");
-    gdpfs_dir_close(fi->fh);
+    gdpfs_file_close(fi->fh);
     return 0;
 }
 
@@ -221,7 +213,6 @@ gdpfs_write(const char *path, const char *buf, size_t size, off_t offset,
             struct fuse_file_info *fi)
 {
     (void)path;
-    printf("buf:%s fh:%lu size:%lu offset:%lu\n", buf, fi->fh, size, offset);
     return gdpfs_file_write(fi->fh, buf, size, offset);
 }
 
@@ -249,55 +240,20 @@ static int
 gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
 {
     EP_STAT estat;
-    uint64_t fh;
-    char *path;
-    char *file;
-    int i;
 
-    if (filepath[0] != '/')
+    if (strlen(filepath) == 0)
         return -ENOENT;
+    if (filepath[strlen(filepath) - 1] == '/')
+        return -EISDIR;
 
-    path = ep_mem_zalloc(strlen(filepath) + 1);
-    if (!path)
-    {
-        goto fail0;
-    }
-    strncpy(path, filepath, strlen(filepath) + 1);
-    for (i = strlen(path); i >= 0; i--)
-    {
-        if (path[i] == '/')
-            break;
-    }
-    file = path + i + 1;
-    path[i] = '\0';
+    fi->fh = gdpfs_dir_create_file_at_path(&estat, filepath, mode, GDPFS_FILE_TYPE_REGULAR);
 
-    printf("adding %s (trash this print)\n", filepath);
-    fh = gdpfs_dir_open_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {
-        ep_app_error("Failed to open dir at path:\"%s\"", path);
-        goto fail0;
-    }
-    estat = gdpfs_dir_add(fh, file, NULL);
-    gdpfs_dir_close(fh);
-    if (!EP_STAT_ISOK(estat))
-    {
-        ep_app_error("Failed to add file:\"%s\"", filepath);
-        goto fail0;
-    }
-    fi->fh = gdpfs_file_open_init(&estat, file, mode, GDPFS_FILE_TYPE_REGULAR, true);
-    if (!EP_STAT_ISOK(estat))
-    {
-        ep_app_error("Failed to initialize file:\"%s\"", filepath);
-        goto fail0;
+        return -ENOENT;
     }
 
-    ep_mem_free(path);
     return 0;
-
-fail0:
-    ep_mem_free(path);
-    return -ENOENT;
 }
 
 static int
@@ -310,7 +266,7 @@ gdpfs_unlink(const char *file)
 static int
 gdpfs_mkdir(const char * file, mode_t mode)
 {
-    printf("Mkdir not implemented. File:\"%s\"\n", file);
+    //printf("Mkdir not implemented. File:\"%s\"\n", file);
     return 0;
 }
 
@@ -372,7 +328,7 @@ int gdpfs_run(char *root_log, bool ro, int fuse_argc, char *fuse_argv[])
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
 
-    // TODO: properly close resources after fuse runs.
+    // TODO: properly close resources after FUSE runs.
     ret = fuse_main(fuse_argc, fuse_argv, &gdpfs_oper, NULL);
     gdpfs_stop();
     return ret;
