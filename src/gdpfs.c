@@ -173,8 +173,6 @@ gdpfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     gdpfs_dir_entry_t ent;
 
     (void) fi;
-    if (strcmp(path, "/") != 0)
-        return -ENOENT;
     
     if (offset == 0)
         offset = 1;
@@ -241,13 +239,14 @@ gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
 {
     EP_STAT estat;
 
+    (void)mode_;
+    
     if (strlen(filepath) == 0)
         return -ENOENT;
     if (filepath[strlen(filepath) - 1] == '/')
         return -EISDIR;
 
     fi->fh = gdpfs_dir_create_file_at_path(&estat, filepath, mode, GDPFS_FILE_TYPE_REGULAR);
-
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
@@ -264,9 +263,23 @@ gdpfs_unlink(const char *file)
 }
 
 static int
-gdpfs_mkdir(const char * file, mode_t mode)
+gdpfs_mkdir(const char *filepath, mode_t mode_)
 {
-    //printf("Mkdir not implemented. File:\"%s\"\n", file);
+    EP_STAT estat;
+    uint64_t fh;
+
+    (void)mode_;
+
+    if (strlen(filepath) == 0)
+        return -ENOENT;
+
+    fh = gdpfs_dir_create_file_at_path(&estat, filepath, mode, GDPFS_FILE_TYPE_DIR);
+    if (!EP_STAT_ISOK(estat))
+    {
+        return -ENOENT;
+    }
+    gdpfs_file_close(fh);
+
     return 0;
 }
 
