@@ -5,10 +5,11 @@
 #include <libgen.h>
 #include <string.h>
 
-static char *root_log_gname;
+static gdpfs_file_gname_t root_log_gname;
 
 struct gdpfs_dir_entry_phys
 {
+    /* The GNAME is the name of the log (a gdpfs_file_gname_t is really just a gdp_name_t). */
     gdpfs_file_gname_t gname;
     bool in_use;
     char name[NAME_MAX2 + 1];
@@ -20,14 +21,10 @@ EP_STAT init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode)
     EP_STAT estat;
     uint64_t fh;
 
-    root_log_gname = ep_mem_zalloc(strlen(root_log) + 1);
-    if (!root_log_gname)
-    {
-        return GDPFS_STAT_OOMEM;
-    }
-    strcpy(root_log_gname, root_log);
+    gdp_parse_name(root_log, root_log_gname);
+
     // initialize the root log
-    fh = gdpfs_file_open_init(&estat, root_log, mode, GDPFS_FILE_TYPE_DIR, false);
+    fh = gdpfs_file_open_init(&estat, root_log_gname, mode, GDPFS_FILE_TYPE_DIR, false);
     if (EP_STAT_ISOK(estat))
     {
         gdpfs_file_close(fh);
@@ -37,7 +34,7 @@ EP_STAT init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode)
 
 void stop_gdpfs_dir()
 {
-    ep_mem_free(root_log_gname);
+    /* Nothing to do here. */
 }
 
 uint64_t gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
@@ -98,7 +95,7 @@ uint64_t gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
                 curr_type = type;
             gdpfs_file_close(fh);
             // TODO: needs to open gname, not name
-            fh = gdpfs_file_open_type(&estat, phys_ent.name, mode, curr_type);
+            fh = gdpfs_file_open_type(&estat, phys_ent.gname, mode, curr_type);
             if (!EP_STAT_ISOK(estat))
             {
                 if (ret_stat)
@@ -122,6 +119,7 @@ uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *filepath,
     uint64_t fh;
     char *path, *file;
     char *path_mem, *file_mem;
+    gdpfs_file_gname_t log_name;
 
     if (filepath[0] != '/')
     {
@@ -144,7 +142,7 @@ uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *filepath,
     file = basename(file_mem);
 
     printf("adding %s (trash this print)\n", filepath);
-    estat = gdpfs_log_create(file);
+    estat = gdpfs_log_create(file, log_name);
     
     if (!EP_STAT_ISOK(estat))
     {
@@ -161,7 +159,7 @@ uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *filepath,
         ep_app_error("Failed to open dir at path:\"%s\"", path);
         goto fail0;
     }
-    estat = gdpfs_dir_add(fh, file, NULL);
+    estat = gdpfs_dir_add(fh, file, log_name);
     gdpfs_file_close(fh);
     if (!EP_STAT_ISOK(estat))
     {
@@ -170,7 +168,7 @@ uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *filepath,
         ep_app_error("Failed to add file:\"%s\"", filepath);
         goto fail0;
     }
-    fh = gdpfs_file_open_init(&estat, file, mode, type, true);
+    fh = gdpfs_file_open_init(&estat, log_name, mode, type, true);
     if (!EP_STAT_ISOK(estat))
     {
         if (ret_stat)
@@ -247,7 +245,7 @@ fail0:
     return -1;
 }
 
-EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, const char *log)
+EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t log_name)
 {
     size_t size;
     off_t offset;
@@ -267,7 +265,8 @@ EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, const char *log)
         }
         offset += size;
     } while(phys_ent.in_use);
-    //phys_ent.gname = "asdf"; // TODO: convert log to gname
+    
+    memcpy(phys_ent.gname, log_name, sizeof(gdpfs_file_gname_t));
     phys_ent.in_use = true;
     strncpy(phys_ent.name, name, NAME_MAX2);
     phys_ent.name[NAME_MAX2] = '\0';

@@ -81,7 +81,7 @@ void stop_gdpfs_file()
 }
 
 // TODO: make log_name the global name
-static uint64_t open_file(EP_STAT *ret_stat, char *log_name,
+static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type, bool init,
         bool strict_init)
 {
@@ -117,7 +117,7 @@ static uint64_t open_file(EP_STAT *ret_stat, char *log_name,
 
     // TODO: use the mode as part of the key
     // check if the file is already open and in the hash
-    file = ep_hash_search(file_hash, strlen(log_name), log_name);
+    file = ep_hash_search(file_hash, sizeof(gdpfs_file_gname_t), log_name);
 
     if (!file)
     {
@@ -125,23 +125,27 @@ static uint64_t open_file(EP_STAT *ret_stat, char *log_name,
         file = ep_mem_zalloc(sizeof(gdpfs_file_t));
         if (!file)
         {
-            stat = GDPFS_STAT_OOMEM;
+            if (ret_stat)
+                *ret_stat = GDPFS_STAT_OOMEM;
             goto fail0;
         }
-        ep_hash_insert(file_hash, strlen(log_name), log_name, file);
+        ep_hash_insert(file_hash, sizeof(gdpfs_file_gname_t), log_name, file);
         stat = gdpfs_log_open(&file->log_handle, log_name, log_mode);
         if (!EP_STAT_ISOK(stat))
         {
+            if (ret_stat)
+                *ret_stat = stat;
             goto fail0;
         }
         file->mode = mode;
-        file->hash_key = ep_mem_zalloc(strlen(log_name) + 1);
+        file->hash_key = ep_mem_zalloc(sizeof(gdpfs_file_gname_t));
         if (!file->hash_key)
         {
-            stat = GDPFS_STAT_OOMEM;
+            if (ret_stat)
+                *ret_stat = GDPFS_STAT_OOMEM;
             goto fail0;
         }
-        strcpy(file->hash_key, log_name);
+        memcpy(file->hash_key, log_name, sizeof(gdpfs_file_gname_t));
         if (ret_stat != NULL)
             *ret_stat = stat;
     }
@@ -160,16 +164,22 @@ static uint64_t open_file(EP_STAT *ret_stat, char *log_name,
             }
             else if (current_type == GDPFS_FILE_TYPE_UNKNOWN || strict_init)
             {
-                *ret_stat = GDPFS_STAT_INVLDFTYPE;
+                if (ret_stat)
+                    *ret_stat = GDPFS_STAT_INVLDFTYPE;
                 goto fail0;
             }
         }
         else if (current_type != type)
         {
-            *ret_stat = GDPFS_STAT_INVLDFTYPE;
+            if (ret_stat)
+                *ret_stat = GDPFS_STAT_INVLDFTYPE;
             goto fail0;
         }
     }
+    
+    // Success
+    if (ret_stat)
+        *ret_stat = GDPFS_STAT_OK;
 
     return fh;
 
@@ -182,18 +192,18 @@ fail1:
     return -1;
 }
 
-uint64_t gdpfs_file_open(EP_STAT *ret_stat, char *name, gdpfs_file_mode_t mode)
+uint64_t gdpfs_file_open(EP_STAT *ret_stat, gdpfs_file_gname_t name, gdpfs_file_mode_t mode)
 {
     return open_file(ret_stat, name, mode, GDPFS_FILE_TYPE_UNKNOWN, false, true);
 }
 
-uint64_t gdpfs_file_open_type(EP_STAT *ret_stat, char *name,
+uint64_t gdpfs_file_open_type(EP_STAT *ret_stat, gdpfs_file_gname_t name,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type)
 {
     return open_file(ret_stat, name, mode, type, false, true);
 }
 
-uint64_t gdpfs_file_open_init(EP_STAT *ret_stat, char *name,
+uint64_t gdpfs_file_open_init(EP_STAT *ret_stat, gdpfs_file_gname_t name,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type, bool strict_init)
 {
     return open_file(ret_stat, name, mode, type, true, strict_init);
@@ -211,7 +221,7 @@ EP_STAT gdpfs_file_close(uint64_t fh)
 
     if (--file->ref_count == 0)
     {
-        ep_hash_delete(file_hash, strlen(file->hash_key), file->hash_key);
+        ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
         estat = gdpfs_log_close(file->log_handle);
         ep_mem_free(file->hash_key);
         ep_mem_free(file);

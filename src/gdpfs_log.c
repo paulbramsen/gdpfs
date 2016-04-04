@@ -30,7 +30,7 @@ EP_STAT init_gdpfs_log()
     return estat;
 }
 
-EP_STAT gdpfs_log_create(char* log_name)
+EP_STAT gdpfs_log_create(char* log_name, gdp_name_t log_iname)
 {
     EP_STAT estat;
     
@@ -39,49 +39,60 @@ EP_STAT gdpfs_log_create(char* log_name)
     
     // The log that we're going to create, and its internal name
     gdp_gcl_t* gcl;
-    gdp_name_t gcl_iname;
+    const gdp_name_t* gcl_iname;
     
     gdp_parse_name(logd_xname, logd_iname);
     
     // Metadata for the log (this allocation will succeed; the program exits otherwise)
     gdp_gclmd_t* gmd = gdp_gclmd_new(0);
+    
+    // Save creation time as metadata (to generate the log name)
+    EP_TIME_SPEC tv;
+    char timestring[40];
+
+    ep_time_now(&tv);
+    ep_time_format(&tv, timestring, sizeof timestring, EP_TIME_FMT_DEFAULT);
+    gdp_gclmd_add(gmd, GDP_GCLMD_CTIME, strlen(timestring), timestring);
+    
     // the external log name gets saved as metadata
-	gdp_gclmd_add(gmd, GDP_GCLMD_XID, strlen(log_name), log_name);
+	//gdp_gclmd_add(gmd, GDP_GCLMD_XID, strlen(log_name), log_name);
     
     // TODO create a keypair and use it for this log
     
     // get the internal name corresponding to the log name
-    gdp_parse_name(log_name, gcl_iname);
+    //gdp_parse_name(log_name, gcl_iname);
     
     // make sure a log with this name doesn't already exist
     // TODO should this check go in the directory, rather than here?
-    estat = gdp_gcl_open(gcl_iname, GDP_MODE_RO, NULL, &gcl);
+    /*estat = gdp_gcl_open(gcl_iname, GDP_MODE_RO, NULL, &gcl);
     if (EP_STAT_ISOK(estat))
     {
         gdp_gcl_close(gcl);
         goto fail;
     }
-    
-    estat = gdp_gcl_create(gcl_iname, logd_iname, gmd, &gcl);
+    */
+    estat = gdp_gcl_create(NULL, logd_iname, gmd, &gcl);
 
     if (EP_STAT_ISOK(estat)) {
-        //gdp_gcl_close(gcl);
         gdp_gclmd_free(gmd);
+        gcl_iname = gdp_gcl_getname(gcl);
+        memcpy(log_iname, *gcl_iname, sizeof(gdp_name_t));
         printf("Creation of %s succeeded\n", log_name);
+        //gdp_gcl_close(gcl);
         return GDPFS_STAT_OK;
+    } else {
+        printf("Creation of %s failed\n", log_name);
+        gdp_gclmd_free(gmd);
+        return GDPFS_STAT_CREATE_FAILED;
     }
-fail:
-    printf("Creation of %s failed\n", log_name);
-    gdp_gclmd_free(gmd);
-    return GDPFS_STAT_CREATE_FAILED;
 }
 
-EP_STAT gdpfs_log_open(gdpfs_log_t **handle, char *log_name, gdpfs_log_mode_t mode)
+EP_STAT gdpfs_log_open(gdpfs_log_t **handle, gdp_name_t gcl_name, gdpfs_log_mode_t mode)
 {
     EP_STAT estat;
-    gdp_name_t gcl_name;
+//    gdp_name_t gcl_name;
     gdp_iomode_t gcl_mode;
-
+/*
     // convert the name to internal form
     estat = gdp_parse_name(log_name, gcl_name);
     if (!EP_STAT_ISOK(estat))
@@ -89,7 +100,7 @@ EP_STAT gdpfs_log_open(gdpfs_log_t **handle, char *log_name, gdpfs_log_mode_t mo
         ep_app_error("Illegal GCL name syntax:\n\t%s", gcl_name);
         return estat;
     }
-
+*/
     // open the GCL
     switch (mode)
     {
