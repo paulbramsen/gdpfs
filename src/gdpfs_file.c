@@ -440,6 +440,8 @@ gdpfs_file_info_t gdpfs_file_info(uint64_t fh, EP_STAT *ret_stat)
     }
     // remember to free our resources
     gdpfs_log_ent_close(log_ent);
+    if (ret_stat)
+        *ret_stat = GDPFS_STAT_OK;
     return info;
 
 fail0:

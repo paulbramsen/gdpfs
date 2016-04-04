@@ -179,6 +179,8 @@ uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *filepath,
 
     ep_mem_free(path_mem);
     ep_mem_free(file_mem);
+    if (ret_stat)
+        *ret_stat = estat;
     return fh;
 
 fail0:
@@ -237,6 +239,8 @@ uint64_t gdpfs_dir_remove_file_at_path(EP_STAT *ret_stat, const char *filepath,
 
     ep_mem_free(path_mem);
     ep_mem_free(file_mem);
+    if (ret_stat)
+        *ret_stat = estat;
     return fh;
 
 fail0:
