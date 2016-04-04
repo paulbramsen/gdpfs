@@ -2,3 +2,4 @@
 bin/*
 *.sublime*
 .DS_Store
+*~

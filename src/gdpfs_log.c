@@ -4,6 +4,8 @@
 #include <ep/ep_app.h>
 #include <string.h>
 
+extern char* logd_xname;
+
 struct gdpfs_log
 {
     gdp_gcl_t *gcl_handle;
@@ -26,6 +28,52 @@ EP_STAT init_gdpfs_log()
         return estat;
     }
     return estat;
+}
+
+EP_STAT gdpfs_log_create(char* log_name)
+{
+    EP_STAT estat;
+    
+    // The internal name of the log server we're going to use
+    gdp_name_t logd_iname;
+    
+    // The log that we're going to create, and its internal name
+    gdp_gcl_t* gcl;
+    gdp_name_t gcl_iname;
+    
+    gdp_parse_name(logd_xname, logd_iname);
+    
+    // Metadata for the log (this allocation will succeed; the program exits otherwise)
+    gdp_gclmd_t* gmd = gdp_gclmd_new(0);
+    // the external log name gets saved as metadata
+	gdp_gclmd_add(gmd, GDP_GCLMD_XID, strlen(log_name), log_name);
+    
+    // TODO create a keypair and use it for this log
+    
+    // get the internal name corresponding to the log name
+    gdp_parse_name(log_name, gcl_iname);
+    
+    // make sure a log with this name doesn't already exist
+    // TODO should this check go in the directory, rather than here?
+    estat = gdp_gcl_open(gcl_iname, GDP_MODE_RO, NULL, &gcl);
+    if (EP_STAT_ISOK(estat))
+    {
+        gdp_gcl_close(gcl);
+        goto fail;
+    }
+    
+    estat = gdp_gcl_create(gcl_iname, logd_iname, gmd, &gcl);
+
+    if (EP_STAT_ISOK(estat)) {
+        //gdp_gcl_close(gcl);
+        gdp_gclmd_free(gmd);
+        printf("Creation of %s succeeded\n", log_name);
+        return GDPFS_STAT_OK;
+    }
+fail:
+    printf("Creation of %s failed\n", log_name);
+    gdp_gclmd_free(gmd);
+    return GDPFS_STAT_CREATE_FAILED;
 }
 
 EP_STAT gdpfs_log_open(gdpfs_log_t **handle, char *log_name, gdpfs_log_mode_t mode)

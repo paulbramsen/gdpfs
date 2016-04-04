@@ -20,6 +20,7 @@ typedef gdp_name_t gdpfs_log_gname_t;
 EP_STAT init_gdpfs_log();
 
 // log management
+EP_STAT gdpfs_log_create(char* log_name);
 EP_STAT gdpfs_log_open(gdpfs_log_t **handle, char *log_name,
         gdpfs_log_mode_t mode);
 EP_STAT gdpfs_log_close(gdpfs_log_t *handle);

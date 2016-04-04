@@ -26,7 +26,7 @@ EP_STAT init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode)
         return GDPFS_STAT_OOMEM;
     }
     strcpy(root_log_gname, root_log);
-    // innitialize the root log
+    // initialize the root log
     fh = gdpfs_file_open_init(&estat, root_log, mode, GDPFS_FILE_TYPE_DIR, false);
     if (EP_STAT_ISOK(estat))
     {
@@ -144,6 +144,15 @@ uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *filepath,
     file = basename(file_mem);
 
     printf("adding %s (trash this print)\n", filepath);
+    estat = gdpfs_log_create(file);
+    
+    if (!EP_STAT_ISOK(estat))
+    {
+        if (ret_stat)
+            *ret_stat = estat;
+        ep_app_error("File already exists at %s\n", filepath);
+        goto fail0;
+    }
     fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {

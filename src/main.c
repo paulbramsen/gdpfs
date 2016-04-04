@@ -10,11 +10,14 @@
 #include <errno.h>
 #include <fcntl.h>
 
+/* The Log Daemon to use to create new logs. */
+char* logd_xname;
+
 static void
 usage(void)
 {
     fprintf(stderr,
-        "Usage: %s [-hr] logname -- [fuse args]\n"
+        "Usage: %s [-hr] logname servername -- [fuse args]\n"
         "    -h display this usage message and exit\n"
         "    -r mount the filesys in read only mode\n",
         ep_app_getprogname());
@@ -64,8 +67,9 @@ main(int argc, char *argv[])
     argv += optind;
 
     gclpname = argv[0];
-    argc--;
-    argv++;
+    logd_xname = argv[1];
+    argc -= 2;
+    argv += 2;
 
     if (show_usage || argc != 0)
         usage();

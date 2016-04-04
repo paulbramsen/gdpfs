@@ -121,7 +121,7 @@ static uint64_t open_file(EP_STAT *ret_stat, char *log_name,
 
     if (!file)
     {
-        // if the file is not yet in the cash, we need to create it
+        // if the file is not yet in the cache, we need to create it
         file = ep_mem_zalloc(sizeof(gdpfs_file_t));
         if (!file)
         {
