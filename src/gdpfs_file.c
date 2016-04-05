@@ -80,6 +80,11 @@ void stop_gdpfs_file()
     // TODO: close the log
 }
 
+EP_STAT gdpfs_file_create(gdpfs_file_gname_t log_iname)
+{
+    return gdpfs_log_create(log_iname);
+}
+
 // TODO: make log_name the global name
 static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type, bool init,

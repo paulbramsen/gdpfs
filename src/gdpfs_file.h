@@ -35,6 +35,7 @@ typedef gdpfs_log_gname_t gdpfs_file_gname_t;
 
 EP_STAT init_gdpfs_file();
 void stop_gdpfs_file();
+EP_STAT gdpfs_file_create(gdpfs_file_gname_t log_iname);
 uint64_t gdpfs_file_open(EP_STAT *ret_stat, gdpfs_log_gname_t name, gdpfs_file_mode_t mode);
 uint64_t gdpfs_file_open_type(EP_STAT *ret_stat, gdpfs_log_gname_t log_name,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type);

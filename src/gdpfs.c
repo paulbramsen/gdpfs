@@ -238,6 +238,7 @@ static int
 gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
 {
     EP_STAT estat;
+    gdpfs_file_gname_t newfile_gname;
 
     (void)mode_;
     
@@ -245,8 +246,14 @@ gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
         return -ENOENT;
     if (filepath[strlen(filepath) - 1] == '/')
         return -EISDIR;
-
-    fi->fh = gdpfs_dir_create_file_at_path(&estat, filepath, mode, GDPFS_FILE_TYPE_REGULAR);
+        
+    estat = gdpfs_file_create(newfile_gname);
+    if (!EP_STAT_ISOK(estat))
+    {
+        return -ENOENT;
+    }
+    
+    fi->fh = gdpfs_dir_add_file_at_path(&estat, newfile_gname, filepath, mode, GDPFS_FILE_TYPE_REGULAR);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
@@ -276,14 +283,21 @@ static int
 gdpfs_mkdir(const char *filepath, mode_t mode_)
 {
     EP_STAT estat;
+    gdpfs_file_gname_t newfile_gname;
     uint64_t fh;
 
     (void)mode_;
 
     if (strlen(filepath) == 0)
         return -ENOENT;
+        
+    estat = gdpfs_file_create(newfile_gname);
+    if (!EP_STAT_ISOK(estat))
+    {
+        return -ENOENT;
+    }
 
-    fh = gdpfs_dir_create_file_at_path(&estat, filepath, mode, GDPFS_FILE_TYPE_DIR);
+    fh = gdpfs_dir_add_file_at_path(&estat, newfile_gname, filepath, mode, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;

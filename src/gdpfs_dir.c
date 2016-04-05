@@ -94,13 +94,12 @@ uint64_t gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
             if (path[0] == '\0')
                 curr_type = type;
             gdpfs_file_close(fh);
-            // TODO: needs to open gname, not name
             fh = gdpfs_file_open_type(&estat, phys_ent.gname, mode, curr_type);
             if (!EP_STAT_ISOK(estat))
             {
                 if (ret_stat)
                     *ret_stat = estat;
-                goto fail0;
+                return -1;
             }
         }
     }
@@ -112,14 +111,13 @@ fail0:
     return -1;
 }
 
-uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *filepath,
-        gdpfs_file_mode_t mode, gdpfs_file_type_t type)
+uint64_t gdpfs_dir_add_file_at_path(EP_STAT *ret_stat, gdpfs_file_gname_t gname,
+        const char *filepath, gdpfs_file_mode_t mode, gdpfs_file_type_t type)
 {
     EP_STAT estat;
     uint64_t fh;
     char *path, *file;
     char *path_mem, *file_mem;
-    gdpfs_file_gname_t log_name;
 
     if (filepath[0] != '/')
     {
@@ -142,15 +140,6 @@ uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *filepath,
     file = basename(file_mem);
 
     printf("adding %s (trash this print)\n", filepath);
-    estat = gdpfs_log_create(file, log_name);
-    
-    if (!EP_STAT_ISOK(estat))
-    {
-        if (ret_stat)
-            *ret_stat = estat;
-        ep_app_error("File already exists at %s\n", filepath);
-        goto fail0;
-    }
     fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {
@@ -159,7 +148,7 @@ uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *filepath,
         ep_app_error("Failed to open dir at path:\"%s\"", path);
         goto fail0;
     }
-    estat = gdpfs_dir_add(fh, file, log_name);
+    estat = gdpfs_dir_add(fh, file, gname);
     gdpfs_file_close(fh);
     if (!EP_STAT_ISOK(estat))
     {
@@ -168,7 +157,7 @@ uint64_t gdpfs_dir_create_file_at_path(EP_STAT *ret_stat, const char *filepath,
         ep_app_error("Failed to add file:\"%s\"", filepath);
         goto fail0;
     }
-    fh = gdpfs_file_open_init(&estat, log_name, mode, type, true);
+    fh = gdpfs_file_open_init(&estat, gname, mode, type, true);
     if (!EP_STAT_ISOK(estat))
     {
         if (ret_stat)
@@ -235,7 +224,7 @@ end:
     return estat;
 }
 
-EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t log_name)
+EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
 {
     size_t size;
     off_t offset;
@@ -256,7 +245,7 @@ EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t log_name
         offset += size;
     } while(phys_ent.in_use);
     
-    memcpy(phys_ent.gname, log_name, sizeof(gdpfs_file_gname_t));
+    memcpy(phys_ent.gname, gname, sizeof(gdpfs_file_gname_t));
     phys_ent.in_use = true;
     strncpy(phys_ent.name, name, NAME_MAX2);
     phys_ent.name[NAME_MAX2] = '\0';
