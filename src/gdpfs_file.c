@@ -80,6 +80,30 @@ void stop_gdpfs_file()
     // TODO: close the log
 }
 
+EP_STAT gdpfs_file_create(uint64_t* fhp, gdpfs_file_gname_t log_iname, gdpfs_file_mode_t mode, gdpfs_file_type_t type)
+{
+    EP_STAT estat;
+    uint64_t fh;
+    
+    estat = gdpfs_log_create(log_iname);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to create file");
+        return estat;
+    }
+    
+    fh = gdpfs_file_open_init(&estat, log_iname, mode, type, true);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to initialize file");
+        return estat;
+    }
+    
+    if (fhp)
+        *fhp = fh;
+    return GDPFS_STAT_OK;
+}
+
 // TODO: make log_name the global name
 static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type, bool init,
@@ -380,7 +404,7 @@ size_t gdpfs_file_write(uint64_t fh, const void *buf, size_t size, off_t offset)
     size_t potential_size;
     gdpfs_file_info_t info;
     
-    info = gdpfs_file_info(fh, &estat);
+    estat = gdpfs_file_info(fh, &info);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to read file size.");
@@ -400,29 +424,27 @@ int gdpfs_file_ftruncate(uint64_t fh, size_t file_size)
     return do_write(fh, file_size, NULL, 0, 0, type);
 }
 
-gdpfs_file_info_t gdpfs_file_info(uint64_t fh, EP_STAT *ret_stat)
+EP_STAT gdpfs_file_info(uint64_t fh, gdpfs_file_info_t* info)
 {
     EP_STAT estat;
     gdpfs_file_t *file;
-    gdpfs_file_info_t info;
     gdpfs_fmeta_t curr_entry;
     gdpfs_log_ent_t *log_ent;
     size_t read;
 
-    memset(&info, 0, sizeof(info));
+    memset(info, 0, sizeof(gdpfs_file_info_t));
     
     file = lookup_fh(fh);
     if (file == NULL)
     {
+        estat = GDPFS_STAT_BADFH;
         goto fail0;
     }
 
-    info.mode = file->mode;
+    info->mode = file->mode;
     estat = gdpfs_log_ent_open(file->log_handle, &log_ent, -1);
     if (!EP_STAT_ISOK(estat))
     {
-        if (ret_stat)
-            *ret_stat = estat;
         goto fail0;
     }
     else
@@ -431,23 +453,20 @@ gdpfs_file_info_t gdpfs_file_info(uint64_t fh, EP_STAT *ret_stat)
         read = gdpfs_log_ent_read(log_ent, &curr_entry, sizeof(gdpfs_fmeta_t));
         if (read != sizeof(gdpfs_fmeta_t))
         {
-            if (ret_stat)
-                *ret_stat = GDPFS_STAT_CORRUPT;
+            estat = GDPFS_STAT_CORRUPT;
             goto fail0;
         }
-        info.size = curr_entry.file_size;
-        info.type = curr_entry.type;
+        info->size = curr_entry.file_size;
+        info->type = curr_entry.type;
     }
     // remember to free our resources
     gdpfs_log_ent_close(log_ent);
-    if (ret_stat)
-        *ret_stat = GDPFS_STAT_OK;
-    return info;
+    return GDPFS_STAT_OK;
 
 fail0:
-    info.size = 0;
-    info.type = GDPFS_FILE_TYPE_UNKNOWN;
-    return info;
+    info->size = 0;
+    info->type = GDPFS_FILE_TYPE_UNKNOWN;
+    return estat;
 }
 
 static gdpfs_file_t *lookup_fh(uint64_t fh)
@@ -507,5 +526,6 @@ fail0:
 
 void gdpfs_file_gname(uint64_t fh, gdpfs_file_gname_t gname)
 {
-    gdpfs_log_gname(files[fh]->log_handle, gname);
+    //gdpfs_log_gname(files[fh]->log_handle, gname);
+    memcpy(gname, files[fh]->hash_key, sizeof(gdpfs_file_gname_t));
 }
