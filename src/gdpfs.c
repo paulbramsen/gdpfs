@@ -259,17 +259,15 @@ static int
 gdpfs_unlink(const char *filepath)
 {
     EP_STAT estat;
-    uint64_t fh;
 
     if (strlen(filepath) == 0)
         return -ENOENT;
 
-    fh = gdpfs_dir_remove_file_at_path(&estat, filepath, mode, GDPFS_FILE_TYPE_REGULAR);
+    estat = gdpfs_dir_remove_file_at_path(filepath, mode);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
     }
-    gdpfs_file_close(fh);
 
     return 0;
 }
@@ -299,17 +297,15 @@ static int
 gdpfs_rmdir(const char *filepath)
 {
     EP_STAT estat;
-    uint64_t fh;
 
     if (strlen(filepath) == 0)
         return -ENOENT;
 
-    fh = gdpfs_dir_remove_file_at_path(&estat, filepath, mode, GDPFS_FILE_TYPE_DIR);
+    estat = gdpfs_dir_remove_file_at_path(filepath, mode);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
     }
-    gdpfs_file_close(fh);
 
     return 0;
 }

@@ -123,6 +123,7 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
     {
         // if the file is not yet in the cache, we need to create it
         file = ep_mem_zalloc(sizeof(gdpfs_file_t));
+        printf("Allocated file at address %p\n", file);
         if (!file)
         {
             if (ret_stat)
@@ -151,6 +152,7 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
     }
     file->ref_count++;
     files[fh] = file;
+    printf("Opening file at %p: refcount = %d\n", file, file->ref_count);
 
     // check type and initialize if necessary
     if (type != GDPFS_FILE_TYPE_UNKNOWN)
@@ -186,7 +188,9 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
 fail0:
     files[fh] = NULL;
     bitmap_release(fhs, fh);
+    printf("Freeing hash key at address (fail) %p\n", file->hash_key);
     ep_mem_free(file->hash_key);
+    printf("Freeing file at address (fail) %p\n", file);
     ep_mem_free(file);
 fail1:
     return -1;
@@ -218,12 +222,15 @@ EP_STAT gdpfs_file_close(uint64_t fh)
     if (file == NULL)
         return GDPFS_STAT_BADFH;
     bitmap_release(fhs, fh);
+    printf("Closing file at %p: refcount = %d\n", file, file->ref_count);
 
     if (--file->ref_count == 0)
     {
         ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
         estat = gdpfs_log_close(file->log_handle);
+        printf("Freeing hash key at address %p\n", file->hash_key);
         ep_mem_free(file->hash_key);
+        printf("Freeing file at address %p\n", file);
         ep_mem_free(file);
     }    
     return estat;
