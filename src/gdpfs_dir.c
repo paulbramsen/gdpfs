@@ -136,7 +136,7 @@ EP_STAT gdpfs_dir_add_file_at_path(gdpfs_file_gname_t gname,
     path = dirname(path_mem);
     file = basename(file_mem);
 
-    printf("adding %s (trash this print)\n", filepath);
+    printf("Adding file %s\n", filepath);
     fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {
@@ -227,7 +227,7 @@ EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
         }
         offset += size;
     } while(phys_ent.in_use);
-    
+
     memcpy(phys_ent.gname, gname, sizeof(gdpfs_file_gname_t));
     phys_ent.in_use = true;
     strncpy(phys_ent.name, name, NAME_MAX2);
@@ -253,7 +253,6 @@ EP_STAT gdpfs_dir_remove(uint64_t fh, const char *name)
 
     offset = 0;
     estat = GDPFS_STAT_NOTFOUND;
-    // TODO: make sure name doesn't exist
     do {
         size = gdpfs_file_read(fh, &phys_ent, sizeof(gdpfs_dir_entry_phys_t), offset);
         if (size != 0 && size != sizeof(gdpfs_dir_entry_phys_t))
