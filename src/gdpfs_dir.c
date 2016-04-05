@@ -111,8 +111,8 @@ fail0:
     return -1;
 }
 
-uint64_t gdpfs_dir_add_file_at_path(EP_STAT *ret_stat, gdpfs_file_gname_t gname,
-        const char *filepath, gdpfs_file_mode_t mode, gdpfs_file_type_t type)
+EP_STAT gdpfs_dir_add_file_at_path(gdpfs_file_gname_t gname,
+        const char *filepath, gdpfs_file_mode_t mode)
 {
     EP_STAT estat;
     uint64_t fh;
@@ -121,17 +121,14 @@ uint64_t gdpfs_dir_add_file_at_path(EP_STAT *ret_stat, gdpfs_file_gname_t gname,
 
     if (filepath[0] != '/')
     {
-        if (ret_stat)
-            *ret_stat = GDPFS_STAT_BADPATH;
-        return -1;
+        return GDPFS_STAT_BADPATH;
     }
 
     path_mem = ep_mem_zalloc(strlen(filepath) + 1);
     file_mem = ep_mem_zalloc(strlen(filepath) + 1);
     if (!path_mem || !file_mem)
     {
-        if (ret_stat)
-            *ret_stat = GDPFS_STAT_OOMEM;
+        estat = GDPFS_STAT_OOMEM;
         goto fail0;
     }
     strncpy(path_mem, filepath, strlen(filepath) + 1);
@@ -143,8 +140,6 @@ uint64_t gdpfs_dir_add_file_at_path(EP_STAT *ret_stat, gdpfs_file_gname_t gname,
     fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {
-        if (ret_stat)
-            *ret_stat = estat;
         ep_app_error("Failed to open dir at path:\"%s\"", path);
         goto fail0;
     }
@@ -152,30 +147,18 @@ uint64_t gdpfs_dir_add_file_at_path(EP_STAT *ret_stat, gdpfs_file_gname_t gname,
     gdpfs_file_close(fh);
     if (!EP_STAT_ISOK(estat))
     {
-        if (ret_stat)
-            *ret_stat = estat;
         ep_app_error("Failed to add file:\"%s\"", filepath);
-        goto fail0;
-    }
-    fh = gdpfs_file_open_init(&estat, gname, mode, type, true);
-    if (!EP_STAT_ISOK(estat))
-    {
-        if (ret_stat)
-            *ret_stat = estat;
-        ep_app_error("Failed to initialize file:\"%s\"", filepath);
         goto fail0;
     }
 
     ep_mem_free(path_mem);
     ep_mem_free(file_mem);
-    if (ret_stat)
-        *ret_stat = estat;
-    return fh;
+    return GDPFS_STAT_OK;
 
 fail0:
     ep_mem_free(path_mem);
     ep_mem_free(file_mem);
-    return -1;
+    return estat;
 }
 
 // TODO: need to combine this with gdpfs_dir_create_file_at_path!

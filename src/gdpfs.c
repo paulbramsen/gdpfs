@@ -40,7 +40,7 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
     fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_UNKNOWN);
     if (!EP_STAT_ISOK(estat))
         return -ENOENT;
-    info = gdpfs_file_info(fh, &estat);
+    estat = gdpfs_file_info(fh, &info);
     if (!EP_STAT_ISOK(estat))
         goto fail0;
     
@@ -239,6 +239,7 @@ gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
 {
     EP_STAT estat;
     gdpfs_file_gname_t newfile_gname;
+    uint64_t fh;
 
     (void)mode_;
     
@@ -247,17 +248,19 @@ gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
     if (filepath[strlen(filepath) - 1] == '/')
         return -EISDIR;
         
-    estat = gdpfs_file_create(newfile_gname);
+    estat = gdpfs_file_create(&fh, newfile_gname, mode, GDPFS_FILE_TYPE_REGULAR);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
     }
     
-    fi->fh = gdpfs_dir_add_file_at_path(&estat, newfile_gname, filepath, mode, GDPFS_FILE_TYPE_REGULAR);
+    estat = gdpfs_dir_add_file_at_path(newfile_gname, filepath, mode);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
     }
+    
+    fi->fh = fh;
 
     return 0;
 }
@@ -291,18 +294,18 @@ gdpfs_mkdir(const char *filepath, mode_t mode_)
     if (strlen(filepath) == 0)
         return -ENOENT;
         
-    estat = gdpfs_file_create(newfile_gname);
-    if (!EP_STAT_ISOK(estat))
-    {
-        return -ENOENT;
-    }
-
-    fh = gdpfs_dir_add_file_at_path(&estat, newfile_gname, filepath, mode, GDPFS_FILE_TYPE_DIR);
+    estat = gdpfs_file_create(&fh, newfile_gname, mode, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
     }
     gdpfs_file_close(fh);
+
+    estat = gdpfs_dir_add_file_at_path(newfile_gname, filepath, mode);
+    if (!EP_STAT_ISOK(estat))
+    {
+        return -ENOENT;
+    }
 
     return 0;
 }
@@ -327,7 +330,26 @@ gdpfs_rmdir(const char *filepath)
 static int
 gdpfs_rename(const char *filepath1, const char *filepath2)
 {
-    printf("Rename not implemented. fp1:\"%s\" fp2:\"%s\"\n", filepath1, filepath2);
+    EP_STAT estat;
+    uint64_t fh;
+    gdpfs_file_gname_t gname;
+    int rv = open_(filepath1, &fh);
+    if (rv)
+    {
+        return -ENOENT;
+    }
+    gdpfs_file_gname(fh, gname);
+    gdpfs_file_close(fh);
+    estat = gdpfs_dir_add_file_at_path(gname, filepath2, mode);
+    if (!EP_STAT_ISOK(estat))
+    {
+        return -ENOENT;
+    }
+    estat = gdpfs_dir_remove_file_at_path(filepath1, mode);
+    if (!EP_STAT_ISOK(estat))
+    {
+        return -ENOENT;
+    }
     return 0;
 }
 
