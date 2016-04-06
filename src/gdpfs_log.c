@@ -33,19 +33,19 @@ EP_STAT init_gdpfs_log()
 EP_STAT gdpfs_log_create(gdp_name_t log_iname)
 {
     EP_STAT estat;
-    
+
     // The internal name of the log server we're going to use
     gdp_name_t logd_iname;
-    
+
     // The log that we're going to create, and its internal name
     gdp_gcl_t* gcl;
     const gdp_name_t* gcl_iname;
-    
+
     gdp_parse_name(logd_xname, logd_iname);
-    
+
     // Metadata for the log (this allocation will succeed; the program exits otherwise)
     gdp_gclmd_t* gmd = gdp_gclmd_new(0);
-    
+
     // Save creation time as metadata (to generate the log name)
     EP_TIME_SPEC tv;
     char timestring[40];
@@ -53,7 +53,7 @@ EP_STAT gdpfs_log_create(gdp_name_t log_iname)
     ep_time_now(&tv);
     ep_time_format(&tv, timestring, sizeof timestring, EP_TIME_FMT_DEFAULT);
     gdp_gclmd_add(gmd, GDP_GCLMD_CTIME, strlen(timestring), timestring);
-    
+
     // TODO create a keypair and use it for this log
 
     estat = gdp_gcl_create(NULL, logd_iname, gmd, &gcl);
@@ -91,7 +91,7 @@ EP_STAT gdpfs_log_open(gdpfs_log_t **handle, gdp_name_t gcl_name, gdpfs_log_mode
     {
     case GDPFS_LOG_MODE_RO:
         gcl_mode = GDP_MODE_RO;
-        break;    
+        break;
     case GDPFS_LOG_MODE_RA:
         gcl_mode = GDP_MODE_RA;
         break;
@@ -197,7 +197,7 @@ EP_STAT gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent, gdpfs_rec
     estat = gdp_gcl_read(handle->gcl_handle, recno, log_ent->datum);
     if (!EP_STAT_ISOK(estat))
     {
-        if (EP_STAT_DETAIL(estat) == GDP_COAP_NOTFOUND)
+        if (EP_STAT_DETAIL(estat) == _GDP_CCODE_NOTFOUND)
         {
             estat = GDPFS_STAT_NOTFOUND;
         }
