@@ -18,6 +18,8 @@ usage(void)
 {
     fprintf(stderr,
         "Usage: %s [-hr] logname servername -- [fuse args]\n"
+        "    logname: GDP address of filesystem root directory log\n"
+        "    servername: GDP address of log daemon to create new logs on\n"
         "    -h display this usage message and exit\n"
         "    -r mount the filesys in read only mode\n",
         ep_app_getprogname());
