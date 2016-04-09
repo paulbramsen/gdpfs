@@ -13,14 +13,15 @@ LFLAGS=	-Wall $(FUSE_LIBS) $(LIBGDP) $(LIBEP) $(DEBUG)
 
 SRCDIR=src
 BINDIR=bin
+BINOUT=gdpfs
 BUILDDIR=$(BINDIR)/build
 
 _OBJ=gdpfs.o gdpfs_file.o gdpfs_log.o gdpfs_dir.o main.o bitmap.o
 OBJ=$(patsubst %,$(BUILDDIR)/%,$(_OBJ))
 
-all: $(BINDIR)/gdpfs
+all: $(BINDIR)/$(BINOUT)
 
-$(BINDIR)/gdpfs: $(OBJ)
+$(BINDIR)/$(BINOUT): $(OBJ)
 	mkdir -p $(@D)
 	gcc -o $@ $^ $(LFLAGS)
 
