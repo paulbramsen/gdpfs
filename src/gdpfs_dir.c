@@ -215,19 +215,19 @@ EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
 
     offset = 0;
     // TODO: make sure name doesn't exist
-    do {
+    while (true) {
         size = gdpfs_file_read(fh, &phys_ent, sizeof(gdpfs_dir_entry_phys_t), offset);
-        if (size == 0)
-        {
-            break;
-        }
-        else if (size != sizeof(gdpfs_dir_entry_phys_t))
+        if (size != 0 && size != sizeof(gdpfs_dir_entry_phys_t))
         {
             return GDPFS_STAT_CORRUPT;
         }
+        if (size == 0 || !phys_ent.in_use) 
+        {
+            break;
+        }
         offset += size;
-    } while(phys_ent.in_use);
-
+    }
+    
     memcpy(phys_ent.gname, gname, sizeof(gdpfs_file_gname_t));
     phys_ent.in_use = true;
     strncpy(phys_ent.name, name, NAME_MAX2);
