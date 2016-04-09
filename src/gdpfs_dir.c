@@ -147,7 +147,7 @@ EP_STAT gdpfs_dir_add_file_at_path(gdpfs_file_gname_t gname,
     gdpfs_file_close(fh);
     if (!EP_STAT_ISOK(estat))
     {
-        ep_app_error("Failed to add file:\"%s\"", filepath);
+        ep_app_error("Failed to add file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
         goto fail0;
     }
 
@@ -213,19 +213,33 @@ EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
     off_t offset;
     gdpfs_dir_entry_phys_t phys_ent;
 
+    off_t insert_offset;
+    bool insert_offset_set = false;
+    
     offset = 0;
-    // TODO: make sure name doesn't exist
     while (true) {
         size = gdpfs_file_read(fh, &phys_ent, sizeof(gdpfs_dir_entry_phys_t), offset);
-        if (size != 0 && size != sizeof(gdpfs_dir_entry_phys_t))
-        {
-            return GDPFS_STAT_CORRUPT;
-        }
-        if (size == 0 || !phys_ent.in_use) 
+        if (size == 0)
         {
             break;
         }
+        if (size != sizeof(gdpfs_dir_entry_phys_t))
+            return GDPFS_STAT_CORRUPT;
+        else if (phys_ent.in_use)
+        {
+            if (strcmp(phys_ent.name, name) == 0)
+                return GDPFS_STAT_FILE_EXISTS;
+        }
+        else if (!insert_offset_set)
+        {
+            insert_offset = offset;
+            insert_offset_set = true;
+        }
         offset += size;
+    }
+    
+    if (insert_offset_set) {
+        offset = insert_offset;
     }
     
     memcpy(phys_ent.gname, gname, sizeof(gdpfs_file_gname_t));
