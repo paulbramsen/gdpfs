@@ -99,11 +99,11 @@ fail0:
 }
 
 static int
-open_(const char *path, uint64_t *fh)
+open_(const char *path, uint64_t *fh, gdpfs_file_type_t type)
 {
     EP_STAT estat;
 
-    *fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_REGULAR);
+    *fh = gdpfs_dir_open_file_at_path(&estat, path, mode, type);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to open file at path:\"%s\"", path);
@@ -115,21 +115,13 @@ open_(const char *path, uint64_t *fh)
 static int
 gdpfs_open(const char *path, struct fuse_file_info *fi)
 {
-    return open_(path, &fi->fh);
+    return open_(path, &fi->fh, GDPFS_FILE_TYPE_REGULAR);
 }
 
 static int
 gdpfs_opendir(const char *path, struct fuse_file_info *fi)
 {
-    EP_STAT estat;
-
-    fi->fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
-    if (!EP_STAT_ISOK(estat))
-    {
-        ep_app_error("Failed to opendir at path:\"%s\"", path);
-        return -ENOENT;
-    }
-    return 0;
+    return open_(path, &fi->fh, GDPFS_FILE_TYPE_DIR);
 }
 
 static int
@@ -217,7 +209,7 @@ gdpfs_truncate(const char *file, off_t file_size)
     int res;
     uint64_t fh;
 
-    if ((res = open_(file, &fh)) != 0)
+    if ((res = open_(file, &fh, GDPFS_FILE_TYPE_REGULAR)) != 0)
         return res;
     res = gdpfs_file_ftruncate(fh, file_size);
     res = release_(file, fh) || res;
@@ -295,7 +287,7 @@ gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
     estat = gdpfs_create_general(&fh, filepath, GDPFS_FILE_TYPE_REGULAR, existing_logname);
     if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
     {
-        printf("Opeining existing file\n");
+        printf("Opening existing file\n");
         fh = gdpfs_file_open_type(&estat, existing_logname, mode, GDPFS_FILE_TYPE_REGULAR);
     }
     if (!EP_STAT_ISOK(estat))
@@ -359,18 +351,30 @@ static int
 gdpfs_rename(const char *filepath1, const char *filepath2)
 {
     EP_STAT estat;
-    uint64_t fh;
+    uint64_t fh, fh2;
+    gdpfs_file_info_t finfo;
+    gdpfs_file_type_t f1type;
+    gdpfs_file_type_t f2type;
     gdpfs_file_gname_t gname;
+    gdpfs_dir_entry_t dirent;
     char *file, *file_mem;
     off_t insert_offset;
-    int rv = open_(filepath1, &fh);
+    gdpfs_file_gname_t existing_logname;
+    int rv = open_(filepath1, &fh, GDPFS_FILE_TYPE_UNKNOWN);
+    int failure = -ENOENT;
     if (rv)
     {
         return -ENOENT;
     }
 
     gdpfs_file_gname(fh, gname);
+    estat = gdpfs_file_info(fh, &finfo);
     gdpfs_file_close(fh);
+    if (!EP_STAT_ISOK(estat))
+    {
+        return -ENOENT;
+    }
+    f1type = finfo.type;
     
     estat = gdpfs_dir_open_parent_dir(&fh, filepath2, mode, &file, &file_mem);
     if (!EP_STAT_ISOK(estat))
@@ -378,14 +382,52 @@ gdpfs_rename(const char *filepath1, const char *filepath2)
         return -ENOENT;
     }
     
-    estat = gdpfs_find_insert_offset(&insert_offset, fh, file, NULL);
-    if (!EP_STAT_ISOK(estat) && EP_STAT_DETAIL(estat) != EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+    estat = gdpfs_find_insert_offset(&insert_offset, fh, file, existing_logname);
+    if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+    {
+        fh2 = gdpfs_file_open(&estat, existing_logname, mode);
+        if (!EP_STAT_ISOK(estat))
+        {
+            ep_app_error("Could not open parent directory of \"%s\": %d", filepath2, EP_STAT_DETAIL(estat));
+            goto failandfree;
+        }
+        estat = gdpfs_file_info(fh2, &finfo);
+        if (!EP_STAT_ISOK(estat))
+        {
+            ep_app_error("Could not get info of parent directory of \"%s\": %d", filepath2, EP_STAT_DETAIL(estat));
+            goto failcloseandfree;
+        }
+        f2type = finfo.type;
+        if (f1type != f2type)
+        {
+            ep_mem_free(file_mem);
+            if (f2type == GDPFS_FILE_TYPE_REGULAR)
+                failure = -ENOTDIR;
+            else
+                failure = -EISDIR;
+            goto failcloseandfree;
+        }
+        if (f2type == GDPFS_FILE_TYPE_DIR)
+        {
+            // Check to make sure that the directory is empty
+            estat = gdpfs_dir_read(fh2, &dirent, 0);
+            if (!EP_STAT_ISOK(estat))
+            {
+                ep_app_error("Could not read parent directory of \"%s\": %d", filepath2, EP_STAT_DETAIL(estat));
+                goto failcloseandfree;
+            }
+            else if (EP_STAT_DETAIL(estat) != EP_STAT_DETAIL(GDPFS_STAT_EOF))
+            {
+                failure = -ENOTEMPTY;
+                goto failcloseandfree;
+            }
+        }
+    }
+    else if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Parent directory is corrupt:\"%s\": %d", filepath2, EP_STAT_DETAIL(estat));
-        ep_mem_free(file_mem);
-        return -ENOENT;
+        goto failandfree;
     }
-    //TODO check type of filepath1 and filepath 2 before OK'ing it if EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
     
     estat = gdpfs_dir_add_at_offset(fh, insert_offset, file, gname);
     ep_mem_free(file_mem);
@@ -400,6 +442,12 @@ gdpfs_rename(const char *filepath1, const char *filepath2)
         return -ENOENT;
     }
     return 0;
+    
+failcloseandfree:
+    gdpfs_file_close(fh2);
+failandfree:
+    ep_mem_free(file_mem);
+    return failure;
 }
 
 static int
