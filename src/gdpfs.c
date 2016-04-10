@@ -231,12 +231,59 @@ gdpfs_ftruncate(const char *file, off_t file_size, struct fuse_file_info *fi)
     return gdpfs_file_ftruncate(fi->fh, file_size);
 }
 
+EP_STAT
+gdpfs_create_general(uint64_t* fh, const char* filepath, gdpfs_file_type_t type, gdpfs_file_gname_t gname_if_exists)
+{
+    EP_STAT estat;
+    off_t insert_offset;
+    char *file, *file_mem;
+    gdpfs_file_gname_t newfile_gname;
+    uint64_t dirfh;
+    
+    estat = gdpfs_dir_open_parent_dir(&dirfh, filepath, mode, &file, &file_mem);
+    if (!EP_STAT_ISOK(estat))
+    {
+        return estat;
+    }
+    
+    printf("Adding file %s\n", filepath);
+    estat = gdpfs_find_insert_offset(&insert_offset, dirfh, file, gname_if_exists);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to find insert offset for file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
+        goto fail;
+    }
+    
+    estat = gdpfs_file_create(fh, newfile_gname, mode, type);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to create file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
+        goto fail;
+    }
+
+    estat = gdpfs_dir_add_at_offset(dirfh, insert_offset, file, newfile_gname);
+    gdpfs_file_close(dirfh);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to add file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
+        // TODO close fh
+        goto fail;
+    }
+    
+    ep_mem_free(file_mem);
+    return GDPFS_STAT_OK;
+    
+fail:
+    ep_mem_free(file_mem);
+    return estat;
+}
+
 static int
 gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
 {
     EP_STAT estat;
-    gdpfs_file_gname_t newfile_gname;
     uint64_t fh;
+    gdpfs_log_gname_t existing_logname;
 
     (void)mode_;
 
@@ -245,20 +292,15 @@ gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
     if (filepath[strlen(filepath) - 1] == '/')
         return -EISDIR;
 
-    estat = gdpfs_file_create(&fh, newfile_gname, mode, GDPFS_FILE_TYPE_REGULAR);
-    if (!EP_STAT_ISOK(estat))
+    estat = gdpfs_create_general(&fh, filepath, GDPFS_FILE_TYPE_REGULAR, existing_logname);
+    if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
     {
-        return -ENOENT;
+        printf("Opeining existing file\n");
+        fh = gdpfs_file_open_type(&estat, existing_logname, mode, GDPFS_FILE_TYPE_REGULAR);
     }
-
-    estat = gdpfs_dir_add_file_at_path(newfile_gname, filepath, mode);
     if (!EP_STAT_ISOK(estat))
-    {
         return -ENOENT;
-    }
-
     fi->fh = fh;
-
     return 0;
 }
 
@@ -283,27 +325,16 @@ static int
 gdpfs_mkdir(const char *filepath, mode_t mode_)
 {
     EP_STAT estat;
-    gdpfs_file_gname_t newfile_gname;
     uint64_t fh;
 
     (void)mode_;
 
     if (strlen(filepath) == 0)
         return -ENOENT;
-
-    estat = gdpfs_file_create(&fh, newfile_gname, mode, GDPFS_FILE_TYPE_DIR);
+        
+    estat = gdpfs_create_general(&fh, filepath, GDPFS_FILE_TYPE_DIR, NULL);
     if (!EP_STAT_ISOK(estat))
-    {
         return -ENOENT;
-    }
-    gdpfs_file_close(fh);
-
-    estat = gdpfs_dir_add_file_at_path(newfile_gname, filepath, mode);
-    if (!EP_STAT_ISOK(estat))
-    {
-        return -ENOENT;
-    }
-
     return 0;
 }
 
@@ -330,18 +361,39 @@ gdpfs_rename(const char *filepath1, const char *filepath2)
     EP_STAT estat;
     uint64_t fh;
     gdpfs_file_gname_t gname;
+    char *file, *file_mem;
+    off_t insert_offset;
     int rv = open_(filepath1, &fh);
     if (rv)
     {
         return -ENOENT;
     }
+
     gdpfs_file_gname(fh, gname);
     gdpfs_file_close(fh);
-    estat = gdpfs_dir_add_file_at_path(gname, filepath2, mode);
+    
+    estat = gdpfs_dir_open_parent_dir(&fh, filepath2, mode, &file, &file_mem);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
     }
+    
+    estat = gdpfs_find_insert_offset(&insert_offset, fh, file, NULL);
+    if (!EP_STAT_ISOK(estat) && EP_STAT_DETAIL(estat) != EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+    {
+        ep_app_error("Parent directory is corrupt:\"%s\": %d", filepath2, EP_STAT_DETAIL(estat));
+        ep_mem_free(file_mem);
+        return -ENOENT;
+    }
+    //TODO check type of filepath1 and filepath 2 before OK'ing it if EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+    
+    estat = gdpfs_dir_add_at_offset(fh, insert_offset, file, gname);
+    ep_mem_free(file_mem);
+    if (!EP_STAT_ISOK(estat))
+    {
+        return -ENOENT;
+    }
+    
     estat = gdpfs_dir_remove_file_at_path(filepath1, mode);
     if (!EP_STAT_ISOK(estat))
     {

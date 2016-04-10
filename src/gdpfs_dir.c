@@ -111,88 +111,94 @@ fail0:
     return -1;
 }
 
+EP_STAT gdpfs_dir_open_parent_dir(uint64_t* fh, const char* filepath, gdpfs_file_mode_t mode, char** file, char** tofree)
+{
+    EP_STAT estat;
+    char *path, *path_mem;
+    
+    if (filepath[0] != '/')
+    {
+        return GDPFS_STAT_BADPATH;
+    }
+
+    path_mem = ep_mem_zalloc(strlen(filepath) + 1);
+    if (!path_mem)
+    {
+        return GDPFS_STAT_OOMEM;
+    }
+    strncpy(path_mem, filepath, strlen(filepath) + 1);
+    path = dirname(path_mem);
+    
+    *fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
+    if (!EP_STAT_ISOK(estat) || file == NULL)
+    {
+        ep_mem_free(path_mem);
+        *tofree = NULL;
+    }
+    else
+    {
+        strncpy(path_mem, filepath, strlen(filepath) + 1);
+        *file = basename(path_mem);
+        *tofree = path_mem;
+    }
+    
+    return estat;
+}
+
+/*
 EP_STAT gdpfs_dir_add_file_at_path(gdpfs_file_gname_t gname,
         const char *filepath, gdpfs_file_mode_t mode)
 {
     EP_STAT estat;
     uint64_t fh;
-    char *path, *file;
-    char *path_mem, *file_mem;
-
-    if (filepath[0] != '/')
-    {
-        return GDPFS_STAT_BADPATH;
-    }
-
-    path_mem = ep_mem_zalloc(strlen(filepath) + 1);
-    file_mem = ep_mem_zalloc(strlen(filepath) + 1);
-    if (!path_mem || !file_mem)
-    {
-        estat = GDPFS_STAT_OOMEM;
-        goto fail0;
-    }
-    strncpy(path_mem, filepath, strlen(filepath) + 1);
-    strncpy(file_mem, filepath, strlen(filepath) + 1);
-    path = dirname(path_mem);
-    file = basename(file_mem);
-
-    printf("Adding file %s\n", filepath);
-    fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
+    
+    char *file, *file_mem;
+    off_t insert_offset;
+    
+    estat = gdpfs_dir_open_parent_dir(&fh, filepath, mode, &file, &file_mem);
     if (!EP_STAT_ISOK(estat))
     {
-        ep_app_error("Failed to open dir at path:\"%s\"", path);
-        goto fail0;
+        ep_app_error("Failed to open parent dir of \"%s\"", filepath);
+        return estat;
     }
-    estat = gdpfs_dir_add(fh, file, gname);
+    
+    printf("Adding file %s\n", filepath);
+    estat = gdpfs_find_insert_offset(&insert_offset, fh, file);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to find insert offset for file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
+        goto end;
+    }
+    estat = gdpfs_dir_add_at_offset(fh, insert_offset, file, gname);
     gdpfs_file_close(fh);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to add file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
-        goto fail0;
+        goto end;
     }
+    
+    estat = GDPFS_STAT_OK;
 
-    ep_mem_free(path_mem);
-    ep_mem_free(file_mem);
-    return GDPFS_STAT_OK;
-
-fail0:
-    ep_mem_free(path_mem);
+end:
     ep_mem_free(file_mem);
     return estat;
 }
+*/
 
-// TODO: need to combine this with gdpfs_dir_create_file_at_path!
 EP_STAT gdpfs_dir_remove_file_at_path(const char *filepath, gdpfs_file_mode_t mode)
 {
     EP_STAT estat;
     uint64_t fh;
-    char *path, *file;
-    char *path_mem, *file_mem;
+    char *file, *file_mem;
 
-    if (filepath[0] != '/')
-    {
-        return GDPFS_STAT_BADPATH;
-    }
-
-    path_mem = ep_mem_zalloc(strlen(filepath) + 1);
-    file_mem = ep_mem_zalloc(strlen(filepath) + 1);
-    if (!path_mem || !file_mem)
-    {
-        estat = GDPFS_STAT_OOMEM;
-        goto end;
-    }
-    strncpy(path_mem, filepath, strlen(filepath) + 1);
-    strncpy(file_mem, filepath, strlen(filepath) + 1);
-    path = dirname(path_mem);
-    file = basename(file_mem);
-
-    printf("removing %s (trash this print)\n", filepath);
-    fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
+    estat = gdpfs_dir_open_parent_dir(&fh, filepath, mode, &file, &file_mem);
     if (!EP_STAT_ISOK(estat))
     {
-        ep_app_error("Failed to open dir at path:\"%s\"", path);
-        goto end;
+        ep_app_error("Failed to open parent dir of \"%s\"", filepath);
+        return estat;
     }
+
+    printf("removing %s (trash this print)\n", filepath);
     estat = gdpfs_dir_remove(fh, file);
     gdpfs_file_close(fh);
     if (!EP_STAT_ISOK(estat))
@@ -202,12 +208,11 @@ EP_STAT gdpfs_dir_remove_file_at_path(const char *filepath, gdpfs_file_mode_t mo
     }
 
 end:
-    ep_mem_free(path_mem);
     ep_mem_free(file_mem);
     return estat;
 }
 
-EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
+EP_STAT gdpfs_find_insert_offset(off_t* offset_ptr, uint64_t fh, const char* name, gdpfs_file_gname_t gname_if_exists)
 {
     size_t size;
     off_t offset;
@@ -217,18 +222,22 @@ EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
     bool insert_offset_set = false;
     
     offset = 0;
-    while (true) {
+    while (true)
+    {
         size = gdpfs_file_read(fh, &phys_ent, sizeof(gdpfs_dir_entry_phys_t), offset);
         if (size == 0)
-        {
             break;
-        }
-        if (size != sizeof(gdpfs_dir_entry_phys_t))
+        else if (size != sizeof(gdpfs_dir_entry_phys_t))
             return GDPFS_STAT_CORRUPT;
         else if (phys_ent.in_use)
         {
             if (strcmp(phys_ent.name, name) == 0)
+            {
+                if (gname_if_exists)
+                    memcpy(gname_if_exists, phys_ent.gname, sizeof(gdpfs_file_gname_t));
+                *offset_ptr = offset;
                 return GDPFS_STAT_FILE_EXISTS;
+            }
         }
         else if (!insert_offset_set)
         {
@@ -238,9 +247,18 @@ EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
         offset += size;
     }
     
-    if (insert_offset_set) {
-        offset = insert_offset;
-    }
+    if (insert_offset_set)
+        *offset_ptr = insert_offset;
+    else
+        *offset_ptr = offset;
+        
+    return GDPFS_STAT_OK;
+}
+
+EP_STAT gdpfs_dir_add_at_offset(uint64_t fh, off_t offset, const char *name, gdpfs_file_gname_t gname)
+{
+    size_t size;
+    gdpfs_dir_entry_phys_t phys_ent;
     
     memcpy(phys_ent.gname, gname, sizeof(gdpfs_file_gname_t));
     phys_ent.in_use = true;
