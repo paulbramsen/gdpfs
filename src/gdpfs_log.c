@@ -6,8 +6,6 @@
 
 extern char* logd_xname;
 
-static int open_count = 0;
-
 struct gdpfs_log
 {
     gdp_gcl_t *gcl_handle;
