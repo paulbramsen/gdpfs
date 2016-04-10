@@ -20,31 +20,29 @@
 #define MAGIC_NUMBER 0xb531479b64f64e0d
 
 // TODO: file should store a copy of the meta data. This makes writes easier.
-struct gdpfs_file
+typedef struct
 {
     gdpfs_log_t *log_handle;
     gdpfs_file_mode_t mode;
     char *hash_key;
     uint32_t ref_count;
-};
-typedef struct gdpfs_file gdpfs_file_t;
+} gdpfs_file_t;
 
-struct gdpfs_fmeta
+typedef struct
 {
     size_t file_size;
     off_t ent_offset;
     size_t ent_size;
     gdpfs_file_type_t type;
     uint64_t magic;
-};
-typedef struct gdpfs_fmeta gdpfs_fmeta_t;
+} gdpfs_fmeta_t;
 
 #define MAX_FHS 256
 static bitmap_t *fhs;
 static gdpfs_file_t **files;
 static EP_HASH *file_hash;
 
-// Private Functions 
+// Private Functions
 static size_t do_write(uint64_t fh, size_t file_size, const char *buf,
         size_t size, off_t offset, gdpfs_file_type_t type);
 static gdpfs_file_type_t file_type(uint64_t fh);
@@ -84,21 +82,21 @@ EP_STAT gdpfs_file_create(uint64_t* fhp, gdpfs_file_gname_t log_iname, gdpfs_fil
 {
     EP_STAT estat;
     uint64_t fh;
-    
+
     estat = gdpfs_log_create(log_iname);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to create file");
         return estat;
     }
-    
+
     fh = gdpfs_file_open_init(&estat, log_iname, mode, type, true);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to initialize file");
         return estat;
     }
-    
+
     if (fhp)
         *fhp = fh;
     return GDPFS_STAT_OK;
@@ -119,7 +117,7 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
     {
     case GDPFS_FILE_MODE_RO:
         log_mode = GDPFS_LOG_MODE_RO;
-        break;    
+        break;
     case GDPFS_FILE_MODE_RW:
         log_mode = GDPFS_LOG_MODE_RA;
         break;
@@ -200,7 +198,7 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
             goto fail0;
         }
     }
-    
+
     // Success
     if (ret_stat)
         *ret_stat = GDPFS_STAT_OK;
@@ -249,7 +247,7 @@ EP_STAT gdpfs_file_close(uint64_t fh)
         estat = gdpfs_log_close(file->log_handle);
         ep_mem_free(file->hash_key);
         ep_mem_free(file);
-    }    
+    }
     return estat;
 }
 
@@ -403,7 +401,7 @@ size_t gdpfs_file_write(uint64_t fh, const void *buf, size_t size, off_t offset)
     size_t file_size;
     size_t potential_size;
     gdpfs_file_info_t info;
-    
+
     estat = gdpfs_file_info(fh, &info);
     if (!EP_STAT_ISOK(estat))
     {
@@ -433,7 +431,7 @@ EP_STAT gdpfs_file_info(uint64_t fh, gdpfs_file_info_t* info)
     size_t read;
 
     memset(info, 0, sizeof(gdpfs_file_info_t));
-    
+
     file = lookup_fh(fh);
     if (file == NULL)
     {

@@ -6,6 +6,8 @@
 
 extern char* logd_xname;
 
+static int open_count = 0;
+
 struct gdpfs_log
 {
     gdp_gcl_t *gcl_handle;
@@ -57,35 +59,40 @@ EP_STAT gdpfs_log_create(gdp_name_t log_iname)
     // TODO create a keypair and use it for this log
 
     estat = gdp_gcl_create(NULL, logd_iname, gmd, &gcl);
-
-    if (EP_STAT_ISOK(estat)) {
-        gdp_gclmd_free(gmd);
-        gcl_iname = gdp_gcl_getname(gcl);
-        memcpy(log_iname, *gcl_iname, sizeof(gdp_name_t));
-        printf("File creation succeeded\n");
-        //gdp_gcl_close(gcl);
-        return GDPFS_STAT_OK;
-    } else {
-        printf("File creation failed\n");
-        gdp_gclmd_free(gmd);
-        return GDPFS_STAT_CREATE_FAILED;
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to create log.");
+        goto fail0;
     }
+
+    // TODO:Error checking here?
+    gdp_gclmd_free(gmd);
+    gcl_iname = gdp_gcl_getname(gcl);
+    memcpy(log_iname, *gcl_iname, sizeof(gdp_name_t));
+    printf("File creation succeeded\n");
+
+    /*
+    estat = gdp_gcl_close(gcl);
+    if (!EP_STAT_ISOK(estat))
+    {
+        char sbuf[100];
+
+        ep_app_error("Cannot close GCL:\n    %s",
+            ep_stat_tostr(estat, sbuf, sizeof sbuf));
+    }
+    */
+    return GDPFS_STAT_OK;
+
+fail0:
+    gdp_gclmd_free(gmd);
+    return GDPFS_STAT_CREATE_FAILED;
 }
 
 EP_STAT gdpfs_log_open(gdpfs_log_t **handle, gdp_name_t gcl_name, gdpfs_log_mode_t mode)
 {
     EP_STAT estat;
-//    gdp_name_t gcl_name;
     gdp_iomode_t gcl_mode;
-/*
-    // convert the name to internal form
-    estat = gdp_parse_name(log_name, gcl_name);
-    if (!EP_STAT_ISOK(estat))
-    {
-        ep_app_error("Illegal GCL name syntax:\n\t%s", gcl_name);
-        return estat;
-    }
-*/
+
     // open the GCL
     switch (mode)
     {
@@ -115,6 +122,7 @@ EP_STAT gdpfs_log_open(gdpfs_log_t **handle, gdp_name_t gcl_name, gdpfs_log_mode
             ep_stat_tostr(estat, sbuf, sizeof sbuf));
         goto fail0;
     }
+
     // TODO: better size protection?
     memcpy((*handle)->gname, gcl_name, sizeof((*handle)->gname) * sizeof(*(*handle)->gname));
 
