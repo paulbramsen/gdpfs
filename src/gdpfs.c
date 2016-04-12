@@ -78,64 +78,18 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
     {
         case GDPFS_FILE_MODE_RO:
             // turn off all write bits
-            // TODO
+            stbuf->st_mode &= ~(S_IWUSR | S_IWGRP | S_IWOTH);
             break;
         case GDPFS_FILE_MODE_RW:
             // anythign goes so just use files stored permissions
             break;
         case GDPFS_FILE_MODE_WO:
             // turn off all read bits
-            // TODO
+            stbuf->st_mode &= ~(S_IRUSR | S_IRGRP | S_IROTH);
             break;
         default:
             goto fail0;
     }
-    /*
-    printf("%d\n", info.file_perm);
-    if (info.file_type == GDPFS_FILE_TYPE_REGULAR)
-    {
-        //stbuf->st_mode = S_IFREG;
-        switch (fs_mode)
-        {
-        case GDPFS_FILE_MODE_RO:
-            // turn off all write bits
-            stbuf->st_mode |= 0544;
-            break;
-        case GDPFS_FILE_MODE_RW:
-            // anythign goes so just use files stored permissions
-            stbuf->st_mode |= 0744;
-            break;
-        case GDPFS_FILE_MODE_WO:
-            // turn off all read bits
-            stbuf->st_mode |= 0200;
-            break;
-        default:
-            goto fail0;
-        }
-    }
-    else if (info.file_type == GDPFS_FILE_TYPE_DIR)
-    {
-        //stbuf->st_mode = S_IFDIR;
-        switch (fs_mode)
-        {
-        case GDPFS_FILE_MODE_RO:
-            stbuf->st_mode |= 0555;
-            break;
-        case GDPFS_FILE_MODE_RW:
-            stbuf->st_mode |= 0755;
-            break;
-        case GDPFS_FILE_MODE_WO:
-            stbuf->st_mode |= 0200;
-            break;
-        default:
-            goto fail0;
-        }
-    }
-    else
-    {
-        goto fail0;
-    }
-    */
 
     gdpfs_file_close(fh);
     return 0;

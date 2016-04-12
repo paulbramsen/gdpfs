@@ -105,7 +105,6 @@ gdpfs_file_create(uint64_t* fhp, gdpfs_file_gname_t log_iname,
     return GDPFS_STAT_OK;
 }
 
-// TODO: make log_name the global name
 static uint64_t
 open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
         gdpfs_file_mode_t perm, bool init, bool strict_init)
@@ -526,52 +525,7 @@ static gdpfs_file_t *lookup_fh(uint64_t fh)
     return files[fh];
 }
 
-// TODO: generalize this stuff into a log read meta style function
-/*
-static gdpfs_file_type_t file_type(uint64_t fh)
-{
-    EP_STAT estat;
-    gdpfs_file_t *file;
-    gdpfs_file_type_t type;
-    gdpfs_fmeta_t curr_entry;
-    gdpfs_log_ent_t *log_ent;
-
-    file = lookup_fh(fh);
-    if (file == NULL)
-        return 0;
-
-    estat = gdpfs_log_ent_open(file->log_handle, &log_ent, -1);
-    if (!EP_STAT_ISOK(estat))
-    {
-        if (EP_STAT_IS_SAME(estat, GDPFS_STAT_NOTFOUND))
-        {
-            // no entries yet so file type is new
-            type = GDPFS_FILE_TYPE_NEW;
-        }
-        else
-        {
-            // error
-            type = GDPFS_FILE_TYPE_UNKNOWN;
-        }
-        goto fail0;
-    }
-    else
-    {
-        // TODO: check that this returns sizeof(gdpfs_fmeta_t). If not, corruption
-        gdpfs_log_ent_read(log_ent, &curr_entry, sizeof(gdpfs_fmeta_t));
-        type = curr_entry.file_type;
-    }
-    // remember to free our resources
-    gdpfs_log_ent_close(log_ent);
-    return type;
-
-fail0:
-    return type;
-}
-*/
-
 void gdpfs_file_gname(uint64_t fh, gdpfs_file_gname_t gname)
 {
-    //gdpfs_log_gname(files[fh]->log_handle, gname);
     memcpy(gname, files[fh]->hash_key, sizeof(gdpfs_file_gname_t));
 }
