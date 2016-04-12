@@ -16,7 +16,8 @@ struct gdpfs_dir_entry_phys
 };
 typedef struct gdpfs_dir_entry_phys gdpfs_dir_entry_phys_t;
 
-EP_STAT init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode)
+EP_STAT
+init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode)
 {
     EP_STAT estat;
     uint64_t fh;
@@ -24,7 +25,7 @@ EP_STAT init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode)
     gdp_parse_name(root_log, root_log_gname);
 
     // initialize the root log
-    fh = gdpfs_file_open_init(&estat, root_log_gname, mode, GDPFS_FILE_TYPE_DIR, false);
+    fh = gdpfs_file_open_init(&estat, root_log_gname, GDPFS_FILE_TYPE_DIR, false);
     if (EP_STAT_ISOK(estat))
     {
         gdpfs_file_close(fh);
@@ -32,12 +33,14 @@ EP_STAT init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode)
     return estat;
 }
 
-void stop_gdpfs_dir()
+void
+stop_gdpfs_dir()
 {
     /* Nothing to do here. */
 }
 
-uint64_t gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
+uint64_t
+gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
         gdpfs_file_mode_t mode, gdpfs_file_type_t type)
 {
     EP_STAT estat;
@@ -57,7 +60,14 @@ uint64_t gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
         return -1;
     }
 
-    fh = gdpfs_file_open_type(&estat, root_log_gname, mode, GDPFS_FILE_TYPE_DIR);
+    fh = gdpfs_file_open_type(&estat, root_log_gname, GDPFS_FILE_TYPE_DIR);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to open file at path \"%s\".", path);
+        if (ret_stat != NULL)
+            *ret_stat = estat;
+        return -1;
+    }
     curr_type = GDPFS_FILE_TYPE_DIR;
     while (path[0] != '\0')
     {
@@ -94,7 +104,7 @@ uint64_t gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
             if (path[0] == '\0')
                 curr_type = type;
             gdpfs_file_close(fh);
-            fh = gdpfs_file_open_type(&estat, phys_ent.gname, mode, curr_type);
+            fh = gdpfs_file_open_type(&estat, phys_ent.gname, curr_type);
             if (!EP_STAT_ISOK(estat))
             {
                 if (ret_stat)
@@ -215,7 +225,7 @@ EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
 
     off_t insert_offset;
     bool insert_offset_set = false;
-    
+
     offset = 0;
     while (true) {
         size = gdpfs_file_read(fh, &phys_ent, sizeof(gdpfs_dir_entry_phys_t), offset);
@@ -237,11 +247,11 @@ EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
         }
         offset += size;
     }
-    
+
     if (insert_offset_set) {
         offset = insert_offset;
     }
-    
+
     memcpy(phys_ent.gname, gname, sizeof(gdpfs_file_gname_t));
     phys_ent.in_use = true;
     strncpy(phys_ent.name, name, NAME_MAX2);

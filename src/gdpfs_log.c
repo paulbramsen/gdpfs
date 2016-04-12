@@ -5,6 +5,7 @@
 #include <string.h>
 
 extern char* logd_xname;
+static gdp_iomode_t gcl_mode;
 
 struct gdpfs_log
 {
@@ -17,7 +18,7 @@ struct gdpfs_log_ent
     gdp_datum_t *datum;
 };
 
-EP_STAT init_gdpfs_log()
+EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode)
 {
     EP_STAT estat;
 
@@ -27,7 +28,22 @@ EP_STAT init_gdpfs_log()
         ep_app_error("GDP initialization failed");
         return estat;
     }
-    return estat;
+    switch (log_mode)
+    {
+    case GDPFS_LOG_MODE_RO:
+        gcl_mode = GDP_MODE_RO;
+        break;
+    case GDPFS_LOG_MODE_RA:
+        gcl_mode = GDP_MODE_RA;
+        break;
+    case GDPFS_LOG_MODE_AO:
+        gcl_mode = GDP_MODE_AO;
+        break;
+    default:
+        ep_app_error("uknown log mode");
+        return GDPFS_STAT_INVLDPARAM;
+    }
+    return GDPFS_STAT_OK;
 }
 
 EP_STAT gdpfs_log_create(gdp_name_t log_iname)
@@ -86,26 +102,11 @@ fail0:
     return GDPFS_STAT_CREATE_FAILED;
 }
 
-EP_STAT gdpfs_log_open(gdpfs_log_t **handle, gdp_name_t gcl_name, gdpfs_log_mode_t mode)
+EP_STAT gdpfs_log_open(gdpfs_log_t **handle, gdp_name_t gcl_name)
 {
     EP_STAT estat;
-    gdp_iomode_t gcl_mode;
 
     // open the GCL
-    switch (mode)
-    {
-    case GDPFS_LOG_MODE_RO:
-        gcl_mode = GDP_MODE_RO;
-        break;
-    case GDPFS_LOG_MODE_RA:
-        gcl_mode = GDP_MODE_RA;
-        break;
-    case GDPFS_LOG_MODE_AO:
-        gcl_mode = GDP_MODE_AO;
-        break;
-    default:
-        return GDPFS_STAT_INVLDPARAM;
-    }
     *handle = ep_mem_zalloc(sizeof(gdpfs_log_t));
     if (*handle == NULL)
     {
@@ -152,6 +153,11 @@ EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent)
 {
     EP_STAT estat;
 
+    if (gcl_mode == GDP_MODE_RO)
+    {
+        ep_app_error("Cannot append to log in RO mode");
+        return GDPFS_STAT_BADLOGMODE;
+    }
     estat = gdp_gcl_append(handle->gcl_handle, ent->datum);
     if (!EP_STAT_ISOK(estat))
     {
@@ -187,11 +193,18 @@ fail0:
  * Attempt to open the ent for reco. If it fails, free resources and set ent to
  * NULL.
  */
-EP_STAT gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent, gdpfs_recno_t recno)
+EP_STAT
+gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent, gdpfs_recno_t recno)
 {
     EP_STAT estat;
     gdpfs_log_ent_t *log_ent;
 
+
+    if (gcl_mode == GDP_MODE_AO)
+    {
+        ep_app_error("Cannot read log ent in AO mode");
+        return GDPFS_STAT_BADLOGMODE;
+    }
     log_ent = gdpfs_log_ent_new();
     *ent = log_ent;
     if (log_ent == NULL)
