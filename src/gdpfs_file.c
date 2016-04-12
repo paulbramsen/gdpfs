@@ -5,8 +5,16 @@
 #include <ep/ep_app.h>
 #include <ep/ep_hash.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "bitmap.h"
+#include "bitmap_file.c"
+#include <assert.h>
+
+
 
 #define max(a,b) \
    ({ __typeof__ (a) _a = (a); \
@@ -26,6 +34,8 @@ typedef struct
     gdpfs_file_mode_t mode;
     char *hash_key;
     uint32_t ref_count;
+    int cache_fd;
+    int cache_bitmap_fd;
 } gdpfs_file_t;
 
 typedef struct
@@ -38,6 +48,8 @@ typedef struct
 } gdpfs_fmeta_t;
 
 #define MAX_FHS 256
+const char *cache_dir = "/home/vagrant/gdpfs-cache";
+const char *bitmap_extension = "-bitmap";
 static bitmap_t *fhs;
 static gdpfs_file_t **files;
 static EP_HASH *file_hash;
@@ -47,6 +59,10 @@ static size_t do_write(uint64_t fh, size_t file_size, const char *buf,
         size_t size, off_t offset, gdpfs_file_type_t type);
 static gdpfs_file_type_t file_type(uint64_t fh);
 static gdpfs_file_t *lookup_fh(uint64_t fh);
+static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, size_t size,
+        off_t offset, bool overwrite);
+static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
+        off_t offset);
 
 
 EP_STAT init_gdpfs_file()
@@ -63,6 +79,7 @@ EP_STAT init_gdpfs_file()
     if (file_hash == NULL)
         goto failoom;
     estat = init_gdpfs_log();
+    // set up caching directory
     return estat;
 
 failoom:
@@ -109,9 +126,32 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
 {
     EP_STAT stat;
     uint64_t fh;
-    gdpfs_file_t *file;
+    gdpfs_file_t *file = NULL;
     gdpfs_log_mode_t log_mode;
     gdpfs_file_type_t current_type;
+    char *cache_name = NULL;
+    char *cache_bitmap_name = NULL;
+
+    // Initialize cache_name and cache_bitmap names
+    gdp_pname_t printable; 
+    gdp_printable_name(log_name, printable);
+    if ((cache_name = ep_mem_zalloc(strlen(cache_dir) + strlen("/") 
+            + strlen(printable) + 1)) == 0) 
+    {
+        if (ret_stat)
+            *ret_stat = GDPFS_STAT_OOMEM;
+        goto fail0;
+    }
+    sprintf(cache_name, "%s%s%s", cache_dir, "/", printable);
+    if ((cache_bitmap_name = ep_mem_zalloc(strlen(cache_dir) + strlen("/") 
+            + strlen(printable) + strlen(bitmap_extension) + 1)) == 0) 
+    {
+        if (ret_stat)
+            *ret_stat = GDPFS_STAT_OOMEM;
+        goto fail0;
+    }
+    sprintf(cache_bitmap_name, "%s%s%s%s", cache_dir, "/",
+            printable, bitmap_extension);
 
     switch (mode)
     {
@@ -170,9 +210,41 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         memcpy(file->hash_key, log_name, sizeof(gdpfs_file_gname_t));
         if (ret_stat != NULL)
             *ret_stat = stat;
+
+        // Check for existence of cache files. If they're there then we open them
+        // and put them in the file struct otherwise create the corresponding files
+        if (access(cache_name, F_OK) != -1) 
+        {
+            file->cache_fd = open(cache_name, O_RDWR);
+            if (file->cache_fd == -1) 
+            {
+                perror("wut");
+            }
+        }
+        else 
+        {
+            file->cache_fd = open(cache_name, O_WRONLY | O_CREAT | O_TRUNC, 0744);
+            if (file->cache_fd == -1) 
+            {
+                perror("wut");
+            }
+        }
+        if (access(cache_bitmap_name, F_OK) != -1) 
+        {
+            file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR);
+        }
+        else 
+        {
+            file->cache_bitmap_fd = open(cache_bitmap_name, O_WRONLY | O_CREAT | O_TRUNC, 0744);
+            if (file->cache_bitmap_fd == -1) 
+            {
+                perror("wut");
+            }
+        }
     }
     file->ref_count++;
     files[fh] = file;
+
 
     // check type and initialize if necessary
     if (type != GDPFS_FILE_TYPE_UNKNOWN)
@@ -210,6 +282,8 @@ fail0:
     bitmap_release(fhs, fh);
     ep_mem_free(file->hash_key);
     ep_mem_free(file);
+    ep_mem_free(cache_name);
+    ep_mem_free(cache_bitmap_name);
 fail1:
     return -1;
 }
@@ -240,6 +314,9 @@ EP_STAT gdpfs_file_close(uint64_t fh)
     if (file == NULL)
         return GDPFS_STAT_BADFH;
     bitmap_release(fhs, fh);
+
+    close(file->cache_fd);
+    close(file->cache_bitmap_fd);
 
     if (--file->ref_count == 0)
     {
@@ -286,6 +363,7 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
         ep_app_error("Corrupt log entry.");
         goto fail0;
     }
+    // fill in cache
 
     // limit read size to file size. Even though we may encounter a larger file
     // size deeper down, we don't want to read its data since that means that
@@ -333,6 +411,11 @@ static size_t do_read(uint64_t fh, char *buf, size_t size, off_t offset)
     file = lookup_fh(fh);
     if (file == NULL)
         return 0;
+    // check cache
+    if (gdpfs_file_get_cache(file, buf, size, offset)) 
+    {
+        return size;
+    }
 
     memset(buf, 0, size);
     return do_read_starting_at_rec_no(files[fh], buf, size, offset, -1);
@@ -386,9 +469,12 @@ static size_t do_write(uint64_t fh, size_t file_size, const char *buf,
     {
         written = size;
     }
-
-    // remember to free our resources
-    gdpfs_log_ent_close(log_ent);
+    // Write to cache
+    if (EP_STAT_ISOK(estat)) 
+    {
+        // true is for overwriting cache
+        gdpfs_file_fill_cache(file, buf, size, offset, true);
+    }
     return written;
 
 fail0:
@@ -527,3 +613,71 @@ void gdpfs_file_gname(uint64_t fh, gdpfs_file_gname_t gname)
     //gdpfs_log_gname(files[fh]->log_handle, gname);
     memcpy(gname, files[fh]->hash_key, sizeof(gdpfs_file_gname_t));
 }
+
+/**
+ * Fill cache with size bytes from the buffer starting at offset
+ * If overwrite is true, then fill in bytes even if they're already in the cache.
+ * If overwrite is false, then do not fill in bytes when they are already in the cache.
+ */
+static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, size_t size,
+        off_t offset, bool overwrite)
+{
+    EP_STAT estat;
+    off_t byte;
+    bitmap_t *bitmap;
+
+    if (overwrite)
+    {
+        if (lseek(file->cache_fd, SEEK_SET, offset) < 0)
+            goto fail0;
+        if (write(file->cache_fd, buffer, size) != size)
+            goto fail0;
+        bitmap_file_set_range(file->cache_bitmap_fd, offset, offset + size);
+    }
+    else
+    {
+        bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);
+        for (byte = 0; byte < size; byte++) 
+        {
+            if (bitmap_is_set(bitmap, byte)) 
+            {
+                if ((write(file->cache_fd, buffer + byte, 1) != 1))
+                {
+                    free(bitmap);
+                    goto fail0; 
+                }
+            }
+        }
+        free(bitmap);
+    }
+    estat = GDPFS_STAT_OK;
+    return estat;
+
+fail0:
+    estat = GDPFS_STAT_OOMEM;
+    return estat;
+}
+
+static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
+        off_t offset)
+{
+    off_t byte;
+    bitmap_t *bitmap;
+
+    bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);
+    for (byte = 0; byte < size; byte++) 
+    {
+        if (!bitmap_is_set(bitmap, byte)) 
+        {
+            free(bitmap);
+            goto fail0; 
+        }
+    }
+    lseek(file->cache_fd, SEEK_SET, offset);
+    assert(read(file->cache_fd, buffer, size) == size);
+    return true;
+
+fail0:
+    return false;
+}
+

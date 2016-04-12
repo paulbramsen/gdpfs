@@ -267,6 +267,15 @@ size_t gdpfs_log_ent_read(gdpfs_log_ent_t *ent, void *buf, size_t size)
         return gdp_buf_read(datum_buf, buf, size);
     }
 }
+/*
+ *  Read size bytes from ent into buf. Difference between read is that peek does 
+ *  not advance pointer in buffer
+ */
+size_t gdpfs_log_ent_peek(gdpfs_log_ent_t *ent, void *buf, size_t size)
+{
+    gdp_buf_t *datum_buf = gdp_datum_getbuf(ent->datum);
+    return gdp_buf_peek(datum_buf, buf, size);
+}
 
 /*
  * Write size bytes from buf to ent. Returns 0 on success and -1 on failure.

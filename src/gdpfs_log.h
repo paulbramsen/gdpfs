@@ -34,6 +34,7 @@ EP_STAT gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent,
 void gdpfs_log_ent_close(gdpfs_log_ent_t *ent);
 size_t gdpfs_log_ent_length(gdpfs_log_ent_t *ent);
 size_t gdpfs_log_ent_read(gdpfs_log_ent_t *ent, void *buf, size_t size);
+size_t gdpfs_log_ent_peek(gdpfs_log_ent_t *ent, void *buf, size_t size);
 int gdpfs_log_ent_write(gdpfs_log_ent_t *ent, const void *buf, size_t size);
 
 #endif // _GDPFS_LOG_H_

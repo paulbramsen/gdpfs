@@ -1,10 +1,5 @@
 #include "bitmap.h"
 
-struct bitmap
-{
-    size_t size;
-    uint8_t data[0];
-};
 
 static inline size_t byte_size(size_t bit_size)
 {
@@ -71,6 +66,22 @@ int bitmap_release(bitmap_t *bmp, uint64_t val)
     return 0;
 }
 
+int bitmap_set(bitmap_t *bmp, uint64_t val) {
+    uint8_t field;
+    off_t byte;
+    off_t bit;
+    if (!bmp)
+        return -1;
+    if (val > bmp->size)
+        return -1;
+    byte = val / 8;
+    bit = val % 8;
+    field = bmp->data[byte];
+    if (((field >> bit) & 1) != 0)
+        return -1;
+    bmp->data[byte] |= (1 << bit);
+}
+
 int bitmap_is_set(bitmap_t *bmp, uint64_t val)
 {
     off_t byte;
@@ -84,6 +95,8 @@ int bitmap_is_set(bitmap_t *bmp, uint64_t val)
     bit = val % 8;
     return (bmp->data[byte] >> bit) & 1;    
 }
+
+
 
 void bitmap_free(bitmap_t *bmp)
 {
