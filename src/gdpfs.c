@@ -129,14 +129,14 @@ _check_open_flags(uint64_t fh, int flags)
 }
 
 static int
-_open(const char *path, uint64_t *fh)
+_open(const char *path, uint64_t *fh, gdpfs_file_type_t type)
 {
     EP_STAT estat;
 
-    *fh = gdpfs_dir_open_file_at_path(&estat, path, GDPFS_FILE_TYPE_REGULAR);
+    *fh = gdpfs_dir_open_file_at_path(&estat, path, type);
     if (!EP_STAT_ISOK(estat))
     {
-        ep_app_error("Failed to open file at path:\"%s\"", path);
+        ep_app_error("_open Failed to open file at path:\"%s\"", path);
         return -ENOENT;
     }
     return 0;
@@ -154,7 +154,7 @@ static int
 gdpfs_open(const char *path, struct fuse_file_info *fi)
 {
 
-    if (_open(path, &fi->fh) != 0)
+    if (_open(path, &fi->fh, GDPFS_FILE_TYPE_REGULAR) != 0)
         return -ENOENT;
 
     if (!_check_open_flags(fi->fh, fi->flags))
@@ -263,7 +263,7 @@ gdpfs_truncate(const char *file, off_t file_size)
     int res;
     uint64_t fh;
 
-    if ((res = _open(file, &fh)) != 0)
+    if ((res = _open(file, &fh, GDPFS_FILE_TYPE_REGULAR)) != 0)
         return res;
     res = gdpfs_file_ftruncate(fh, file_size);
     res = _release(file, fh) || res;
@@ -374,7 +374,7 @@ gdpfs_rename(const char *filepath1, const char *filepath2)
     EP_STAT estat;
     uint64_t fh;
     gdpfs_file_gname_t gname;
-    int rv = _open(filepath1, &fh);
+    int rv = _open(filepath1, &fh, GDPFS_FILE_TYPE_REGULAR);
     if (rv)
     {
         return -ENOENT;
@@ -397,14 +397,13 @@ gdpfs_rename(const char *filepath1, const char *filepath2)
 static int
 gdpfs_access(const char *filepath, int mode)
 {
-    //R_OK, W_OK, and X_OK.  F_OK
     EP_STAT estat;
     uint64_t fh;
     gdpfs_file_info_t info;
     bool success = true;
 
     // _open should fail if file doesn't exist
-    if (_open(filepath, &fh) != 0)
+    if (_open(filepath, &fh, GDPFS_FILE_TYPE_UNKNOWN) != 0)
         return -1;
     estat = gdpfs_file_info(fh, &info);
     if (!EP_STAT_ISOK(estat))
@@ -433,7 +432,7 @@ gdpfs_chmod (const char *filepath, mode_t mode)
     EP_STAT estat;
     uint64_t fh;
 
-    if (_open(filepath, &fh) != 0)
+    if (_open(filepath, &fh, GDPFS_FILE_TYPE_UNKNOWN) != 0)
         return -ENOENT;
     estat = gdpfs_file_set_perm(fh, extract_gdpfs_perm(mode));
     if (!EP_STAT_ISOK(estat))
@@ -452,14 +451,12 @@ gdpfs_chown (const char *filepath, uid_t uid, gid_t gid)
     return 0;
 }
 
-/*
 static int
 gdpfs_utimens(const char* filepath, const struct timespec ts[2])
 {
-    printf("utimens not implemented. File:\"%s\"\n", filepath);
+    ep_app_warn("utimens not implemented. File:\"%s\"", filepath);
     return 0;
 }
-*/
 
 static struct fuse_operations gdpfs_oper = {
     .getattr        = gdpfs_getattr,
@@ -477,10 +474,10 @@ static struct fuse_operations gdpfs_oper = {
     .mkdir          = gdpfs_mkdir,
     .rmdir          = gdpfs_rmdir,
     .rename         = gdpfs_rename,
-    .access         = gdpfs_access,
     .chmod          = gdpfs_chmod,
     .chown          = gdpfs_chown,
-    //.utimens        = gdpfs_utimens,
+    .access         = gdpfs_access,
+    .utimens        = gdpfs_utimens,
 };
 
 int gdpfs_run(char *root_log, bool ro, int fuse_argc, char *fuse_argv[])

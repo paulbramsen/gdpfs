@@ -54,6 +54,7 @@ gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
     int i;
     off_t offset;
     size_t size;
+    // TODO: check execute permission
 
     if (path[0] != '/' && path[0] != '\0')
     {
@@ -66,7 +67,7 @@ gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
     fh = gdpfs_file_open_type(&estat, root_log_gname, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {
-        ep_app_error("Failed to open file at path \"%s\".", path);
+        ep_app_error("Failed to open root at path \"%s\".", path);
         if (ret_stat != NULL)
             *ret_stat = estat;
         return -1;
