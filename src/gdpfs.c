@@ -30,6 +30,11 @@ typedef struct gdpfs_entry gdpfs_entry_t;
 
 static gdpfs_file_mode_t fs_mode;
 
+static inline gdpfs_file_perm_t extract_gdpfs_perm(mode_t mode)
+{
+    return mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+}
+
 static int
 gdpfs_getattr(const char *path, struct stat *stbuf)
 {
@@ -37,7 +42,7 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
     gdpfs_file_info_t info;
     uint64_t fh;
 
-    fh = gdpfs_dir_open_file_at_path(&estat, path, fs_mode, GDPFS_FILE_TYPE_UNKNOWN);
+    fh = gdpfs_dir_open_file_at_path(&estat, path, GDPFS_FILE_TYPE_UNKNOWN);
     if (!EP_STAT_ISOK(estat))
         return -ENOENT;
     // TODO: if fh is -1 deal with it.
@@ -50,9 +55,46 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
     stbuf->st_size = info.file_size;
     stbuf->st_uid = getuid();
     stbuf->st_gid = getgid();
+
+    // set mode
+    stbuf->st_mode = 0;
+    // handle type
+    switch(info.file_type)
+    {
+        case GDPFS_FILE_TYPE_REGULAR:
+            stbuf->st_mode |= S_IFREG;
+            break;
+        case GDPFS_FILE_TYPE_DIR:
+            stbuf->st_mode |= S_IFDIR;
+            break;
+        default:
+            ep_app_error("Invalid file type.");
+            goto fail0;
+    }
+
+    // handle permissions
+    stbuf->st_mode |= info.file_perm;
+    switch (fs_mode)
+    {
+        case GDPFS_FILE_MODE_RO:
+            // turn off all write bits
+            // TODO
+            break;
+        case GDPFS_FILE_MODE_RW:
+            // anythign goes so just use files stored permissions
+            break;
+        case GDPFS_FILE_MODE_WO:
+            // turn off all read bits
+            // TODO
+            break;
+        default:
+            goto fail0;
+    }
+    /*
+    printf("%d\n", info.file_perm);
     if (info.file_type == GDPFS_FILE_TYPE_REGULAR)
     {
-        stbuf->st_mode = S_IFREG;
+        //stbuf->st_mode = S_IFREG;
         switch (fs_mode)
         {
         case GDPFS_FILE_MODE_RO:
@@ -73,7 +115,7 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
     }
     else if (info.file_type == GDPFS_FILE_TYPE_DIR)
     {
-        stbuf->st_mode = S_IFDIR;
+        //stbuf->st_mode = S_IFDIR;
         switch (fs_mode)
         {
         case GDPFS_FILE_MODE_RO:
@@ -93,6 +135,7 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
     {
         goto fail0;
     }
+    */
 
     gdpfs_file_close(fh);
     return 0;
@@ -107,7 +150,7 @@ _open(const char *path, uint64_t *fh)
 {
     EP_STAT estat;
 
-    *fh = gdpfs_dir_open_file_at_path(&estat, path, fs_mode, GDPFS_FILE_TYPE_REGULAR);
+    *fh = gdpfs_dir_open_file_at_path(&estat, path, GDPFS_FILE_TYPE_REGULAR);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to open file at path:\"%s\"", path);
@@ -127,7 +170,7 @@ gdpfs_opendir(const char *path, struct fuse_file_info *fi)
 {
     EP_STAT estat;
 
-    fi->fh = gdpfs_dir_open_file_at_path(&estat, path, fs_mode, GDPFS_FILE_TYPE_DIR);
+    fi->fh = gdpfs_dir_open_file_at_path(&estat, path, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to opendir at path:\"%s\"", path);
@@ -236,26 +279,25 @@ gdpfs_ftruncate(const char *file, off_t file_size, struct fuse_file_info *fi)
 }
 
 static int
-gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
+gdpfs_create(const char *filepath, mode_t mode, struct fuse_file_info *fi)
 {
     EP_STAT estat;
     gdpfs_file_gname_t newfile_gname;
     uint64_t fh;
-
-    (void)mode_;
 
     if (strlen(filepath) == 0)
         return -ENOENT;
     if (filepath[strlen(filepath) - 1] == '/')
         return -EISDIR;
 
-    estat = gdpfs_file_create(&fh, newfile_gname, GDPFS_FILE_TYPE_REGULAR);
+    estat = gdpfs_file_create(&fh, newfile_gname, GDPFS_FILE_TYPE_REGULAR,
+            extract_gdpfs_perm(mode));
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
     }
 
-    estat = gdpfs_dir_add_file_at_path(newfile_gname, filepath, fs_mode);
+    estat = gdpfs_dir_add_file_at_path(newfile_gname, filepath);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
@@ -274,7 +316,7 @@ gdpfs_unlink(const char *filepath)
     if (strlen(filepath) == 0)
         return -ENOENT;
 
-    estat = gdpfs_dir_remove_file_at_path(filepath, fs_mode);
+    estat = gdpfs_dir_remove_file_at_path(filepath);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
@@ -284,25 +326,24 @@ gdpfs_unlink(const char *filepath)
 }
 
 static int
-gdpfs_mkdir(const char *filepath, mode_t mode_)
+gdpfs_mkdir(const char *filepath, mode_t mode)
 {
     EP_STAT estat;
     gdpfs_file_gname_t newfile_gname;
     uint64_t fh;
 
-    (void)mode_;
-
     if (strlen(filepath) == 0)
         return -ENOENT;
 
-    estat = gdpfs_file_create(&fh, newfile_gname, GDPFS_FILE_TYPE_DIR);
+    estat = gdpfs_file_create(&fh, newfile_gname, GDPFS_FILE_TYPE_DIR,
+            extract_gdpfs_perm(mode));
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
     }
     gdpfs_file_close(fh);
 
-    estat = gdpfs_dir_add_file_at_path(newfile_gname, filepath, fs_mode);
+    estat = gdpfs_dir_add_file_at_path(newfile_gname, filepath);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
@@ -319,7 +360,7 @@ gdpfs_rmdir(const char *filepath)
     if (strlen(filepath) == 0)
         return -ENOENT;
 
-    estat = gdpfs_dir_remove_file_at_path(filepath, fs_mode);
+    estat = gdpfs_dir_remove_file_at_path(filepath);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
@@ -341,12 +382,12 @@ gdpfs_rename(const char *filepath1, const char *filepath2)
     }
     gdpfs_file_gname(fh, gname);
     gdpfs_file_close(fh);
-    estat = gdpfs_dir_add_file_at_path(gname, filepath2, fs_mode);
+    estat = gdpfs_dir_add_file_at_path(gname, filepath2);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
     }
-    estat = gdpfs_dir_remove_file_at_path(filepath1, fs_mode);
+    estat = gdpfs_dir_remove_file_at_path(filepath1);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
@@ -355,10 +396,19 @@ gdpfs_rename(const char *filepath1, const char *filepath2)
 }
 
 static int
-gdpfs_chmod (const char *file, mode_t _mode)
+gdpfs_chmod (const char *file, mode_t mode)
 {
-    printf("%d\n", _mode & (S_IRWXU | S_IRWXG | S_IRWXO));
-    printf("Chmod not implemented. File:\"%s\"\n", file);
+    EP_STAT estat;
+    uint64_t fh;
+
+    if (_open(file, &fh) != 0)
+        return -ENOENT;
+    estat = gdpfs_file_set_perm(fh, extract_gdpfs_perm(mode));
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to set permissions");
+    }
+    _release(file, fh);
     return 0;
 }
 
@@ -414,7 +464,7 @@ int gdpfs_run(char *root_log, bool ro, int fuse_argc, char *fuse_argv[])
     estat = init_gdpfs_file(fs_mode);
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
-    estat = init_gdpfs_dir(root_log, fs_mode);
+    estat = init_gdpfs_dir(root_log);
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
 

@@ -88,10 +88,6 @@ main(int argc, char *argv[])
     argv[0] = argv0;
     argc++;
 
-    printf("waiting for keypress...\n");
-    getchar();
-    printf("proceeding\n");
-
     signal(SIGINT, sig_int);
     return gdpfs_run(gclpname, read_only, argc, argv);
 }

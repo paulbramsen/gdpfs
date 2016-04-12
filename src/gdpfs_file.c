@@ -80,7 +80,8 @@ stop_gdpfs_file()
 }
 
 EP_STAT
-gdpfs_file_create(uint64_t* fhp, gdpfs_file_gname_t log_iname, gdpfs_file_type_t type)
+gdpfs_file_create(uint64_t* fhp, gdpfs_file_gname_t log_iname,
+        gdpfs_file_type_t type, gdpfs_file_perm_t perm)
 {
     EP_STAT estat;
     uint64_t fh;
@@ -92,7 +93,7 @@ gdpfs_file_create(uint64_t* fhp, gdpfs_file_gname_t log_iname, gdpfs_file_type_t
         return estat;
     }
 
-    fh = gdpfs_file_open_init(&estat, log_iname, type, true);
+    fh = gdpfs_file_open_init(&estat, log_iname, type, perm, true);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to initialize file");
@@ -107,7 +108,7 @@ gdpfs_file_create(uint64_t* fhp, gdpfs_file_gname_t log_iname, gdpfs_file_type_t
 // TODO: make log_name the global name
 static uint64_t
 open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
-        bool init, bool strict_init)
+        gdpfs_file_mode_t perm, bool init, bool strict_init)
 {
     EP_STAT estat;
     uint64_t fh;
@@ -173,7 +174,7 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
             {
                 current_info.file_size = 0;
                 current_info.file_type = type;
-                current_info.file_perm = 0;
+                current_info.file_perm = perm;
                 do_write(fh, NULL, 0, 0, &current_info);
             }
             else if (current_info.file_type == GDPFS_FILE_TYPE_UNKNOWN || strict_init)
@@ -211,23 +212,25 @@ fail1:
 uint64_t
 gdpfs_file_open(EP_STAT *ret_stat, gdpfs_file_gname_t name)
 {
-    return open_file(ret_stat, name, GDPFS_FILE_TYPE_UNKNOWN, false, true);
+    return open_file(ret_stat, name, GDPFS_FILE_TYPE_UNKNOWN, 0, false, true);
 }
 
 uint64_t
 gdpfs_file_open_type(EP_STAT *ret_stat, gdpfs_file_gname_t name,
         gdpfs_file_type_t type)
 {
-    return open_file(ret_stat, name, type, false, true);
+    return open_file(ret_stat, name, type, 0, false, true);
 }
 
-uint64_t gdpfs_file_open_init(EP_STAT *ret_stat, gdpfs_file_gname_t name,
-        gdpfs_file_type_t type, bool strict_init)
+uint64_t
+gdpfs_file_open_init(EP_STAT *ret_stat, gdpfs_file_gname_t name,
+        gdpfs_file_type_t type, gdpfs_file_perm_t perm, bool strict_init)
 {
-    return open_file(ret_stat, name, type, true, strict_init);
+    return open_file(ret_stat, name, type, perm, true, strict_init);
 }
 
-EP_STAT gdpfs_file_close(uint64_t fh)
+EP_STAT
+gdpfs_file_close(uint64_t fh)
 {
     EP_STAT estat;
     gdpfs_file_t *file;
@@ -322,7 +325,8 @@ fail0:
     return 0;
 }
 
-static size_t do_read(uint64_t fh, char *buf, size_t size, off_t offset)
+static size_t
+do_read(uint64_t fh, char *buf, size_t size, off_t offset)
 {
     gdpfs_file_t *file;
 
@@ -334,12 +338,14 @@ static size_t do_read(uint64_t fh, char *buf, size_t size, off_t offset)
     return do_read_starting_at_rec_no(files[fh], buf, size, offset, -1);
 }
 
-size_t gdpfs_file_read(uint64_t fh, void *buf, size_t size, off_t offset)
+size_t
+gdpfs_file_read(uint64_t fh, void *buf, size_t size, off_t offset)
 {
     return do_read(fh, buf, size, offset);
 }
 
-static size_t do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
+static size_t
+do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     const gdpfs_file_info_t *info)
 {
     EP_STAT estat;
@@ -440,6 +446,14 @@ gdpfs_file_set_perm(uint64_t fh, gdpfs_file_perm_t perm)
     }
     info.file_perm = perm;
     // TODO: dowrite should probably return an EP_STAT so we can error check
+    do_write(fh, NULL, 0, 0, &info);
+    return GDPFS_STAT_OK;
+}
+
+EP_STAT
+gdpfs_file_set_info(uint64_t fh, gdpfs_file_info_t info)
+{
+    // TODO: dowrite should return an EP_STAT so we can error check
     do_write(fh, NULL, 0, 0, &info);
     return GDPFS_STAT_OK;
 }

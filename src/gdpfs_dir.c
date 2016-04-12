@@ -5,6 +5,8 @@
 #include <libgen.h>
 #include <string.h>
 
+#define GDPFS_ROOT_DEFAULT_PERM (0644)
+
 static gdpfs_file_gname_t root_log_gname;
 
 struct gdpfs_dir_entry_phys
@@ -12,12 +14,12 @@ struct gdpfs_dir_entry_phys
     /* The GNAME is the name of the log (a gdpfs_file_gname_t is really just a gdp_name_t). */
     gdpfs_file_gname_t gname;
     bool in_use;
-    char name[NAME_MAX2 + 1];
+    char name[NAME_MAX_GDPFS + 1];
 };
 typedef struct gdpfs_dir_entry_phys gdpfs_dir_entry_phys_t;
 
 EP_STAT
-init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode)
+init_gdpfs_dir(char *root_log)
 {
     EP_STAT estat;
     uint64_t fh;
@@ -25,7 +27,8 @@ init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode)
     gdp_parse_name(root_log, root_log_gname);
 
     // initialize the root log
-    fh = gdpfs_file_open_init(&estat, root_log_gname, GDPFS_FILE_TYPE_DIR, false);
+    fh = gdpfs_file_open_init(&estat, root_log_gname, GDPFS_FILE_TYPE_DIR,
+            GDPFS_ROOT_DEFAULT_PERM, false);
     if (EP_STAT_ISOK(estat))
     {
         gdpfs_file_close(fh);
@@ -41,13 +44,13 @@ stop_gdpfs_dir()
 
 uint64_t
 gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
-        gdpfs_file_mode_t mode, gdpfs_file_type_t type)
+        gdpfs_file_type_t type)
 {
     EP_STAT estat;
     gdpfs_file_type_t curr_type;
     gdpfs_dir_entry_phys_t phys_ent;
     uint64_t fh;
-    char name[NAME_MAX2 + 1];
+    char name[NAME_MAX_GDPFS + 1];
     int i;
     off_t offset;
     size_t size;
@@ -121,8 +124,9 @@ fail0:
     return -1;
 }
 
-EP_STAT gdpfs_dir_add_file_at_path(gdpfs_file_gname_t gname,
-        const char *filepath, gdpfs_file_mode_t mode)
+EP_STAT
+gdpfs_dir_add_file_at_path(gdpfs_file_gname_t gname,
+        const char *filepath)
 {
     EP_STAT estat;
     uint64_t fh;
@@ -147,7 +151,7 @@ EP_STAT gdpfs_dir_add_file_at_path(gdpfs_file_gname_t gname,
     file = basename(file_mem);
 
     printf("Adding file %s\n", filepath);
-    fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
+    fh = gdpfs_dir_open_file_at_path(&estat, path, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to open dir at path:\"%s\"", path);
@@ -172,7 +176,8 @@ fail0:
 }
 
 // TODO: need to combine this with gdpfs_dir_create_file_at_path!
-EP_STAT gdpfs_dir_remove_file_at_path(const char *filepath, gdpfs_file_mode_t mode)
+EP_STAT
+gdpfs_dir_remove_file_at_path(const char *filepath)
 {
     EP_STAT estat;
     uint64_t fh;
@@ -197,7 +202,7 @@ EP_STAT gdpfs_dir_remove_file_at_path(const char *filepath, gdpfs_file_mode_t mo
     file = basename(file_mem);
 
     printf("removing %s (trash this print)\n", filepath);
-    fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
+    fh = gdpfs_dir_open_file_at_path(&estat, path, GDPFS_FILE_TYPE_DIR);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to open dir at path:\"%s\"", path);
@@ -217,7 +222,8 @@ end:
     return estat;
 }
 
-EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
+EP_STAT
+gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
 {
     size_t size;
     off_t offset;
@@ -254,8 +260,8 @@ EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
 
     memcpy(phys_ent.gname, gname, sizeof(gdpfs_file_gname_t));
     phys_ent.in_use = true;
-    strncpy(phys_ent.name, name, NAME_MAX2);
-    phys_ent.name[NAME_MAX2] = '\0';
+    strncpy(phys_ent.name, name, NAME_MAX_GDPFS);
+    phys_ent.name[NAME_MAX_GDPFS] = '\0';
     size = gdpfs_file_write(fh, &phys_ent, sizeof(gdpfs_dir_entry_phys_t), offset);
     if (size == 0)
     {
@@ -268,7 +274,8 @@ EP_STAT gdpfs_dir_add(uint64_t fh, const char *name, gdpfs_file_gname_t gname)
     return GDPFS_STAT_OK;
 }
 
-EP_STAT gdpfs_dir_remove(uint64_t fh, const char *name)
+EP_STAT
+gdpfs_dir_remove(uint64_t fh, const char *name)
 {
     EP_STAT estat;
     size_t size;
@@ -308,7 +315,8 @@ EP_STAT gdpfs_dir_remove(uint64_t fh, const char *name)
     return estat;
 }
 
-EP_STAT gdpfs_dir_read(uint64_t fh, gdpfs_dir_entry_t *ent, off_t offset)
+EP_STAT
+gdpfs_dir_read(uint64_t fh, gdpfs_dir_entry_t *ent, off_t offset)
 {
     size_t size;
 
@@ -325,7 +333,7 @@ EP_STAT gdpfs_dir_read(uint64_t fh, gdpfs_dir_entry_t *ent, off_t offset)
         }
         offset += size;
     } while(!phys_ent.in_use);
-    strncpy(ent->name, phys_ent.name, NAME_MAX2 + 1);
+    strncpy(ent->name, phys_ent.name, NAME_MAX_GDPFS + 1);
     ent->offset = offset;
     return GDPFS_STAT_OK;
 }

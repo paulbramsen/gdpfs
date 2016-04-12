@@ -46,21 +46,24 @@ stop_gdpfs_file();
  */
 EP_STAT
 gdpfs_file_create(uint64_t *fhp, gdpfs_file_gname_t log_iname,
-        gdpfs_file_type_t type);
+        gdpfs_file_type_t type, gdpfs_file_perm_t);
 
 /*
  * file open/close
  */
 uint64_t
-gdpfs_file_open(EP_STAT *ret_stat, gdpfs_log_gname_t name);
+gdpfs_file_open(EP_STAT *ret_stat, gdpfs_file_gname_t name);
 
 uint64_t
-gdpfs_file_open_type(EP_STAT *ret_stat, gdpfs_log_gname_t log_name,
+gdpfs_file_open_type(EP_STAT *ret_stat, gdpfs_file_gname_t name,
         gdpfs_file_type_t type);
 
-// strict_init causes failure if file is not TYPE_NEW
-uint64_t gdpfs_file_open_init(EP_STAT *ret_stat, gdpfs_log_gname_t log_name,
-        gdpfs_file_type_t type, bool strict_init);
+// opens a file and initializes if necessary.
+// strict_init: fail if file is not TYPE_NEW
+// perm: if file is initialized, these permissions will be used
+uint64_t
+gdpfs_file_open_init(EP_STAT *ret_stat, gdpfs_file_gname_t name,
+        gdpfs_file_type_t type, gdpfs_file_perm_t perm, bool strict_init);
 
 EP_STAT
 gdpfs_file_close(uint64_t fh);
@@ -82,6 +85,9 @@ gdpfs_file_ftruncate(uint64_t fh, size_t file_size);
 
 EP_STAT
 gdpfs_file_set_perm(uint64_t fh, gdpfs_file_perm_t perm);
+
+EP_STAT
+gdpfs_file_set_info(uint64_t fh, gdpfs_file_info_t info);
 
 EP_STAT
 gdpfs_file_info(uint64_t fh, gdpfs_file_info_t *ret_stat);
