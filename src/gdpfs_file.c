@@ -124,9 +124,9 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
     // check if the file is already open and in the hash
     file = ep_hash_search(file_hash, sizeof(gdpfs_file_gname_t), log_name);
 
+    // if there file isn't currently open, create and open it
     if (!file)
     {
-        // if the file is not yet in the cache, we need to create it
         file = ep_mem_zalloc(sizeof(gdpfs_file_t));
         if (!file)
         {
@@ -134,7 +134,6 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
                 *ret_stat = GDPFS_STAT_OOMEM;
             goto fail0;
         }
-        ep_hash_insert(file_hash, sizeof(gdpfs_file_gname_t), log_name, file);
         estat = gdpfs_log_open(&file->log_handle, log_name);
         if (!EP_STAT_ISOK(estat))
         {
@@ -150,8 +149,8 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
             goto fail0;
         }
         memcpy(file->hash_key, log_name, sizeof(gdpfs_file_gname_t));
-        if (ret_stat != NULL)
-            *ret_stat = estat;
+        // add to hash table at very end to make handling failure cases easier
+        ep_hash_insert(file_hash, sizeof(gdpfs_file_gname_t), log_name, file);
     }
     file->ref_count++;
     files[fh] = file;
@@ -164,8 +163,7 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
         {
             ep_app_error("Failed to read current file info.");
             *ret_stat = estat;
-            // TODO: is fail0 the right thing to do here? probably want to check ref count. If u see this in a PR I forgot to look into it!
-            goto fail0;
+            goto fail2;
         }
         if (init)
         {
@@ -180,31 +178,34 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
             {
                 if (ret_stat)
                     *ret_stat = GDPFS_STAT_INVLDFTYPE;
-                // TODO: is fail0 the right thing to do here? probably want to check ref count. If u see this in a PR I forgot to look into it!
-                goto fail0;
+                goto fail2;
             }
         }
         else if (current_info.file_type != type)
         {
             if (ret_stat)
                 *ret_stat = GDPFS_STAT_INVLDFTYPE;
-            // TODO: is fail0 the right thing to do here? probably want to check ref count. If u see this in a PR I forgot to look into it!
-            goto fail0;
+            goto fail2;
         }
     }
 
-    // Success
+    // success
     if (ret_stat)
         *ret_stat = GDPFS_STAT_OK;
 
     return fh;
 
 fail0:
-    files[fh] = NULL;
     bitmap_release(fhs, fh);
-    ep_mem_free(file->hash_key);
-    ep_mem_free(file);
+    if (file)
+    {
+        ep_mem_free(file->hash_key);
+        ep_mem_free(file);
+    }
 fail1:
+    return -1;
+fail2:
+    gdpfs_file_close(fh);
     return -1;
 }
 
