@@ -344,6 +344,7 @@ gdpfs_file_read(uint64_t fh, void *buf, size_t size, off_t offset)
     return do_read(fh, buf, size, offset);
 }
 
+// TODO: do_write should probably return an EP_STAT so we can error check
 static size_t
 do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     const gdpfs_file_info_t *info)
@@ -445,7 +446,6 @@ gdpfs_file_set_perm(uint64_t fh, gdpfs_file_perm_t perm)
         return estat;
     }
     info.file_perm = perm;
-    // TODO: dowrite should probably return an EP_STAT so we can error check
     do_write(fh, NULL, 0, 0, &info);
     return GDPFS_STAT_OK;
 }
@@ -453,7 +453,6 @@ gdpfs_file_set_perm(uint64_t fh, gdpfs_file_perm_t perm)
 EP_STAT
 gdpfs_file_set_info(uint64_t fh, gdpfs_file_info_t info)
 {
-    // TODO: dowrite should return an EP_STAT so we can error check
     do_write(fh, NULL, 0, 0, &info);
     return GDPFS_STAT_OK;
 }
@@ -513,7 +512,8 @@ fail0:
     return estat;
 }
 
-static gdpfs_file_t *lookup_fh(uint64_t fh)
+static gdpfs_file_t *
+lookup_fh(uint64_t fh)
 {
     int set;
 
@@ -526,7 +526,8 @@ static gdpfs_file_t *lookup_fh(uint64_t fh)
     return files[fh];
 }
 
-void gdpfs_file_gname(uint64_t fh, gdpfs_file_gname_t gname)
+void
+gdpfs_file_gname(uint64_t fh, gdpfs_file_gname_t gname)
 {
     memcpy(gname, files[fh]->hash_key, sizeof(gdpfs_file_gname_t));
 }

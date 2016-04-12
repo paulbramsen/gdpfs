@@ -99,6 +99,35 @@ fail0:
     return -ENOENT;
 }
 
+static bool
+_check_open_flags(uint64_t fh, int flags)
+{
+    EP_STAT estat;
+    gdpfs_file_info_t info;
+    bool success = true;
+
+    estat = gdpfs_file_info(fh, &info);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to get file info.");
+        return false;
+    }
+
+    // TODO: need to check group/user
+    flags &= (O_RDONLY | O_WRONLY | O_RDWR);
+    if (O_RDONLY == flags)
+        success = success && info.file_perm & S_IRUSR;
+    if (O_WRONLY == flags)
+        success = success && info.file_perm & S_IWUSR;
+    if (O_RDWR == flags)
+    {
+        success = success && info.file_perm & S_IRUSR;
+        success = success && info.file_perm & S_IWUSR;
+    }
+
+    return success;
+}
+
 static int
 _open(const char *path, uint64_t *fh)
 {
@@ -114,9 +143,26 @@ _open(const char *path, uint64_t *fh)
 }
 
 static int
+_release(const char *path, uint64_t fh)
+{
+    (void)path;
+    gdpfs_file_close(fh);
+    return 0;
+}
+
+static int
 gdpfs_open(const char *path, struct fuse_file_info *fi)
 {
-    return _open(path, &fi->fh);
+
+    if (_open(path, &fi->fh) != 0)
+        return -ENOENT;
+
+    if (!_check_open_flags(fi->fh, fi->flags))
+    {
+        _release(path, fi->fh);
+        return -EACCES;
+    }
+    return 0;
 }
 
 static int
@@ -130,14 +176,13 @@ gdpfs_opendir(const char *path, struct fuse_file_info *fi)
         ep_app_error("Failed to opendir at path:\"%s\"", path);
         return -ENOENT;
     }
-    return 0;
-}
 
-static int
-_release(const char *path, uint64_t fh)
-{
-    (void)path;
-    gdpfs_file_close(fh);
+    if (!_check_open_flags(fi->fh, fi->flags))
+    {
+        _release(path, fi->fh);
+        return -EACCES;
+    }
+
     return 0;
 }
 
@@ -350,35 +395,68 @@ gdpfs_rename(const char *filepath1, const char *filepath2)
 }
 
 static int
-gdpfs_chmod (const char *file, mode_t mode)
+gdpfs_access(const char *filepath, int mode)
+{
+    //R_OK, W_OK, and X_OK.  F_OK
+    EP_STAT estat;
+    uint64_t fh;
+    gdpfs_file_info_t info;
+    bool success = true;
+
+    // _open should fail if file doesn't exist
+    if (_open(filepath, &fh) != 0)
+        return -1;
+    estat = gdpfs_file_info(fh, &info);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to get file info.");
+        success = false;
+        goto fail0;
+    }
+    // TODO: need to check group/user
+    if (R_OK & mode)
+        success = success && info.file_perm & S_IRUSR;
+    if (W_OK & mode)
+        success = success && info.file_perm & S_IWUSR;
+    if (X_OK & mode)
+        success = success && info.file_perm & S_IXUSR;
+fail0:
+    _release(filepath, fh);
+    if (success)
+        return 0;
+    return -1;
+}
+
+static int
+gdpfs_chmod (const char *filepath, mode_t mode)
 {
     EP_STAT estat;
     uint64_t fh;
 
-    if (_open(file, &fh) != 0)
+    if (_open(filepath, &fh) != 0)
         return -ENOENT;
     estat = gdpfs_file_set_perm(fh, extract_gdpfs_perm(mode));
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to set permissions");
     }
-    _release(file, fh);
+    _release(filepath, fh);
     return 0;
 }
 
 static int
-gdpfs_chown (const char *file, uid_t uid, gid_t gid)
+gdpfs_chown (const char *filepath, uid_t uid, gid_t gid)
 {
     ep_app_warn("Cannont change owner of file \"%s\" in mounted GDPFS.\n"
-                "All files are owned by the mounter.", file);
+                "All files are owned by the mounter.", filepath);
     return 0;
 }
 
 /*
 static int
-gdpfs_utimens(const char* file, const struct timespec ts[2])
+gdpfs_utimens(const char* filepath, const struct timespec ts[2])
 {
-    printf("utimens not implemented. File:\"%s\"\n", file);
+    printf("utimens not implemented. File:\"%s\"\n", filepath);
     return 0;
 }
 */
@@ -399,6 +477,7 @@ static struct fuse_operations gdpfs_oper = {
     .mkdir          = gdpfs_mkdir,
     .rmdir          = gdpfs_rmdir,
     .rename         = gdpfs_rename,
+    .access         = gdpfs_access,
     .chmod          = gdpfs_chmod,
     .chown          = gdpfs_chown,
     //.utimens        = gdpfs_utimens,

@@ -5,7 +5,7 @@
 #include <libgen.h>
 #include <string.h>
 
-#define GDPFS_ROOT_DEFAULT_PERM (0644)
+#define GDPFS_ROOT_DEFAULT_PERM (0551)
 
 static gdpfs_file_gname_t root_log_gname;
 
