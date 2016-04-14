@@ -13,7 +13,7 @@ if [ -z $1 ]; then
 fi
 DIR=$1
 
-if [ ! -z "`ls gdpfs`" ]; then
+if [ ! -z "`ls gdpfs > /dev/null 2> /dev/null`" ]; then
     echo "Need to delete gdpfs directory first"
     exit
 fi
