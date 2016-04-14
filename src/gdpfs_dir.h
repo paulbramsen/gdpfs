@@ -33,10 +33,6 @@ gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
  * dir read/modify
  */
 EP_STAT
-gdpfs_dir_open_parent_dir(uint64_t* fh, const char* filepath, char** file,
-		char** tofree);
-
-EP_STAT
 gdpfs_dir_create_file_at_path(uint64_t* fh, const char* filepath,
 		gdpfs_file_type_t type, gdpfs_file_gname_t gname_if_exists,
 		gdpfs_file_perm_t perm);

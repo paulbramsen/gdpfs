@@ -19,9 +19,13 @@ struct gdpfs_dir_entry_phys
 typedef struct gdpfs_dir_entry_phys gdpfs_dir_entry_phys_t;
 
 static EP_STAT
-dir_find_insert_offset(off_t* offset_ptr, uint64_t fh, const char* name, gdpfs_file_gname_t gname_if_exists);
+_open_parent_dir(uint64_t* fh, const char* filepath, char** file,
+        char** tofree);
 static EP_STAT
-dir_add_at_offset(uint64_t fh, off_t offset, const char *name, gdpfs_file_gname_t gname);
+_find_insert_offset(off_t* offset_ptr, uint64_t fh, const char* name,
+        gdpfs_file_gname_t gname_if_exists);
+static EP_STAT
+_add_at_offset(uint64_t fh, off_t offset, const char *name, gdpfs_file_gname_t gname);
 
 EP_STAT
 init_gdpfs_dir(char *root_log)
@@ -130,8 +134,8 @@ fail0:
     return -1;
 }
 
-EP_STAT
-gdpfs_dir_open_parent_dir(uint64_t* fh, const char* filepath, char** file,
+static EP_STAT
+_open_parent_dir(uint64_t* fh, const char* filepath, char** file,
         char** tofree)
 {
     EP_STAT estat;
@@ -177,14 +181,14 @@ gdpfs_dir_create_file_at_path(uint64_t* fh, const char* filepath,
     gdpfs_file_gname_t newfile_gname;
     uint64_t dirfh;
 
-    estat = gdpfs_dir_open_parent_dir(&dirfh, filepath, &file, &file_mem);
+    estat = _open_parent_dir(&dirfh, filepath, &file, &file_mem);
     if (!EP_STAT_ISOK(estat))
     {
         return estat;
     }
 
     printf("Adding file %s\n", filepath);
-    estat = dir_find_insert_offset(&insert_offset, dirfh, file, gname_if_exists);
+    estat = _find_insert_offset(&insert_offset, dirfh, file, gname_if_exists);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to find insert offset for file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
@@ -198,7 +202,7 @@ gdpfs_dir_create_file_at_path(uint64_t* fh, const char* filepath,
         goto fail;
     }
 
-    estat = dir_add_at_offset(dirfh, insert_offset, file, newfile_gname);
+    estat = _add_at_offset(dirfh, insert_offset, file, newfile_gname);
     gdpfs_file_close(dirfh);
     if (!EP_STAT_ISOK(estat))
     {
@@ -236,11 +240,11 @@ gdpfs_dir_replace_file_at_path(uint64_t fh, const char *filepath2)
 
     f1type = finfo.file_type;
 
-    estat = gdpfs_dir_open_parent_dir(&fh, filepath2, &file, &file_mem);
+    estat = _open_parent_dir(&fh, filepath2, &file, &file_mem);
     if (!EP_STAT_ISOK(estat))
         return estat;
 
-    estat = dir_find_insert_offset(&insert_offset, fh, file, existing_logname);
+    estat = _find_insert_offset(&insert_offset, fh, file, existing_logname);
     if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
     {
         fh2 = gdpfs_file_open(&estat, existing_logname);
@@ -287,7 +291,7 @@ gdpfs_dir_replace_file_at_path(uint64_t fh, const char *filepath2)
         goto failandfree;
     }
 
-    estat = dir_add_at_offset(fh, insert_offset, file, gname);
+    estat = _add_at_offset(fh, insert_offset, file, gname);
     ep_mem_free(file_mem);
     if (!EP_STAT_ISOK(estat))
         return estat;
@@ -308,7 +312,7 @@ gdpfs_dir_remove_file_at_path(const char *filepath)
     uint64_t fh;
     char *file, *file_mem;
 
-    estat = gdpfs_dir_open_parent_dir(&fh, filepath, &file, &file_mem);
+    estat = _open_parent_dir(&fh, filepath, &file, &file_mem);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to open parent dir of \"%s\"", filepath);
@@ -330,7 +334,7 @@ end:
 }
 
 static EP_STAT
-dir_find_insert_offset(off_t* offset_ptr, uint64_t fh, const char* name,
+_find_insert_offset(off_t* offset_ptr, uint64_t fh, const char* name,
         gdpfs_file_gname_t gname_if_exists)
 {
     size_t size;
@@ -374,7 +378,8 @@ dir_find_insert_offset(off_t* offset_ptr, uint64_t fh, const char* name,
     return GDPFS_STAT_OK;
 }
 
-static EP_STAT dir_add_at_offset(uint64_t fh, off_t offset, const char *name, gdpfs_file_gname_t gname)
+static EP_STAT
+_add_at_offset(uint64_t fh, off_t offset, const char *name, gdpfs_file_gname_t gname)
 {
     size_t size;
     gdpfs_dir_entry_phys_t phys_ent;
