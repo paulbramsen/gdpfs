@@ -4,11 +4,12 @@
 # being directory of gdpfs to compile
 
 TIMER='/usr/bin/time -f %e'
+TAR=gdpfs.tar.gz
 
 if [ -z $1 ]; then
     echo "USAGE: ./copyAndCompile.sh <GDPFS_DIR>"
     echo -e "\tmust be run in root of fuse mounted directory"
-    echo -e "\t<GDPFS_DIR>: directory to make"
+    echo -e "\t<GDPFS_DIR>: tar"
     exit
 fi
 DIR=$1
@@ -26,6 +27,7 @@ function timed() {
 }
 
 timed "cp -r $DIR ."
+timed "tar xzf $TAR"
 cd gdpfs
 timed "make"
 echo "TIME IS: $accum seconds"
