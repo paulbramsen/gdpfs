@@ -8,7 +8,7 @@ void bitmap_file_set_range(int fd, off_t left, off_t right)
 {
     off_t extended_left;
     off_t extended_right;
-    size_t extended_size;
+    ssize_t extended_size;
     off_t byte;
     bitmap_t *bitmap;
 
@@ -32,8 +32,8 @@ bitmap_t *bitmap_file_get_range(int fd, off_t left, off_t right)
 {
     off_t extended_left;
     off_t extended_right;
-    size_t extended_size;
-    size_t size;
+    ssize_t extended_size;
+    ssize_t size;
     off_t byte;
 
     extended_left = left - left % 8;

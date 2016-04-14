@@ -315,8 +315,6 @@ EP_STAT gdpfs_file_close(uint64_t fh)
         return GDPFS_STAT_BADFH;
     bitmap_release(fhs, fh);
 
-    close(file->cache_fd);
-    close(file->cache_bitmap_fd);
 
     if (--file->ref_count == 0)
     {
@@ -324,6 +322,8 @@ EP_STAT gdpfs_file_close(uint64_t fh)
         estat = gdpfs_log_close(file->log_handle);
         ep_mem_free(file->hash_key);
         ep_mem_free(file);
+        close(file->cache_fd);
+        close(file->cache_bitmap_fd);
     }
     return estat;
 }
