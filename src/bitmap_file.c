@@ -1,5 +1,6 @@
-#include "bitmap_file.h"
 #include "bitmap.h"
+#include "bitmap_file.h"
+#include <string.h>
 
 /**
  * Set bits [left, right) to 1
@@ -10,6 +11,7 @@ void bitmap_file_set_range(int fd, off_t left, off_t right)
     off_t extended_right;
     ssize_t extended_size;
     off_t byte;
+    ssize_t size;
     bitmap_t *bitmap;
 
     extended_left = left - left % 8;
@@ -21,7 +23,10 @@ void bitmap_file_set_range(int fd, off_t left, off_t right)
         bitmap_set(bitmap, byte);
     }
     lseek(fd, SEEK_SET, extended_left / 8);
-    write(fd, bitmap->data, (extended_size) / 8);
+    size = write(fd, bitmap->data, (extended_size) / 8);
+    if (size == -1) {
+        perror("wtf");
+    }
     bitmap_free(bitmap);
 }
 
@@ -35,13 +40,18 @@ bitmap_t *bitmap_file_get_range(int fd, off_t left, off_t right)
     ssize_t extended_size;
     ssize_t size;
     off_t byte;
-
+    if (fd == 13 && left == 20480 && right == 24576) {
+        printf("here\n");
+    }
     extended_left = left - left % 8;
     extended_right = right + 8 - right % 8;
     extended_size = extended_right - extended_left;
     uint8_t file_bitmap[extended_size / 8];
     lseek(fd, SEEK_SET, extended_left/8);
     size = read(fd, file_bitmap, extended_size / 8);
+    if (size == -1) {
+        perror("bad fd?");
+    }
     bitmap_t *extended_bitmap = bitmap_create(extended_size);
     memcpy(extended_bitmap->data, file_bitmap, size);
     bitmap_t *bitmap = bitmap_create(right - left);

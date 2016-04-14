@@ -11,7 +11,7 @@
 #include <fcntl.h>
 
 #include "bitmap.h"
-#include "bitmap_file.c"
+#include "bitmap_file.h"
 #include <assert.h>
 
 
@@ -223,7 +223,7 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         }
         else 
         {
-            file->cache_fd = open(cache_name, O_WRONLY | O_CREAT | O_TRUNC, 0744);
+            file->cache_fd = open(cache_name, O_RDWR | O_CREAT | O_TRUNC, 0744);
             if (file->cache_fd == -1) 
             {
                 perror("wut");
@@ -235,7 +235,7 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         }
         else 
         {
-            file->cache_bitmap_fd = open(cache_bitmap_name, O_WRONLY | O_CREAT | O_TRUNC, 0744);
+            file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR | O_CREAT | O_TRUNC, 0744);
             if (file->cache_bitmap_fd == -1) 
             {
                 perror("wut");
