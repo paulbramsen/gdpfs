@@ -69,7 +69,7 @@ EP_STAT gdpfs_log_create(gdp_name_t log_iname)
     memcpy(log_iname, *gcl_iname, sizeof(gdp_name_t));
     printf("File creation succeeded\n");
 
-    /*
+    
     estat = gdp_gcl_close(gcl);
     if (!EP_STAT_ISOK(estat))
     {
@@ -78,7 +78,7 @@ EP_STAT gdpfs_log_create(gdp_name_t log_iname)
         ep_app_error("Cannot close GCL:\n    %s",
             ep_stat_tostr(estat, sbuf, sizeof sbuf));
     }
-    */
+    
     return GDPFS_STAT_OK;
 
 fail0:

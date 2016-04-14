@@ -16,6 +16,9 @@ struct gdpfs_dir_entry_phys
 };
 typedef struct gdpfs_dir_entry_phys gdpfs_dir_entry_phys_t;
 
+static EP_STAT dir_find_insert_offset(off_t* offset_ptr, uint64_t fh, const char* name, gdpfs_file_gname_t gname_if_exists);
+static EP_STAT dir_add_at_offset(uint64_t fh, off_t offset, const char *name, gdpfs_file_gname_t gname);
+
 EP_STAT init_gdpfs_dir(char *root_log, gdpfs_file_mode_t mode)
 {
     EP_STAT estat;
@@ -145,45 +148,138 @@ EP_STAT gdpfs_dir_open_parent_dir(uint64_t* fh, const char* filepath, gdpfs_file
     return estat;
 }
 
-/*
-EP_STAT gdpfs_dir_add_file_at_path(gdpfs_file_gname_t gname,
-        const char *filepath, gdpfs_file_mode_t mode)
+EP_STAT
+gdpfs_dir_create_file_at_path(uint64_t* fh, const char* filepath, gdpfs_file_type_t type, gdpfs_file_gname_t gname_if_exists, gdpfs_file_mode_t mode)
 {
     EP_STAT estat;
-    uint64_t fh;
-    
-    char *file, *file_mem;
     off_t insert_offset;
+    char *file, *file_mem;
+    gdpfs_file_gname_t newfile_gname;
+    uint64_t dirfh;
     
-    estat = gdpfs_dir_open_parent_dir(&fh, filepath, mode, &file, &file_mem);
+    estat = gdpfs_dir_open_parent_dir(&dirfh, filepath, mode, &file, &file_mem);
     if (!EP_STAT_ISOK(estat))
     {
-        ep_app_error("Failed to open parent dir of \"%s\"", filepath);
         return estat;
     }
     
     printf("Adding file %s\n", filepath);
-    estat = gdpfs_find_insert_offset(&insert_offset, fh, file);
+    estat = dir_find_insert_offset(&insert_offset, dirfh, file, gname_if_exists);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to find insert offset for file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
-        goto end;
+        goto fail;
     }
-    estat = gdpfs_dir_add_at_offset(fh, insert_offset, file, gname);
-    gdpfs_file_close(fh);
+    
+    estat = gdpfs_file_create(fh, newfile_gname, mode, type);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Failed to create file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
+        goto fail;
+    }
+
+    estat = dir_add_at_offset(dirfh, insert_offset, file, newfile_gname);
+    gdpfs_file_close(dirfh);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to add file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
-        goto end;
+        // TODO close fh
+        goto fail;
     }
     
-    estat = GDPFS_STAT_OK;
-
-end:
+    ep_mem_free(file_mem);
+    return GDPFS_STAT_OK;
+    
+fail:
     ep_mem_free(file_mem);
     return estat;
 }
-*/
+
+EP_STAT gdpfs_dir_replace_file_at_path(uint64_t fh, const char *filepath2, gdpfs_file_mode_t mode)
+{
+    EP_STAT estat;
+    uint64_t fh2;
+    gdpfs_file_info_t finfo;
+    gdpfs_file_type_t f1type;
+    gdpfs_file_type_t f2type;
+    gdpfs_file_gname_t gname;
+    gdpfs_dir_entry_t dirent;
+    char *file, *file_mem;
+    off_t insert_offset;
+    gdpfs_file_gname_t existing_logname;
+
+    gdpfs_file_gname(fh, gname);
+    estat = gdpfs_file_info(fh, &finfo);
+    if (!EP_STAT_ISOK(estat))
+        return estat;
+        
+    f1type = finfo.type;
+    
+    estat = gdpfs_dir_open_parent_dir(&fh, filepath2, mode, &file, &file_mem);
+    if (!EP_STAT_ISOK(estat))
+        return estat;
+    
+    estat = dir_find_insert_offset(&insert_offset, fh, file, existing_logname);
+    if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+    {
+        fh2 = gdpfs_file_open(&estat, existing_logname, mode);
+        if (!EP_STAT_ISOK(estat))
+        {
+            ep_app_error("Could not open parent directory of \"%s\": %d", filepath2, EP_STAT_DETAIL(estat));
+            goto failandfree;
+        }
+        estat = gdpfs_file_info(fh2, &finfo);
+        if (!EP_STAT_ISOK(estat))
+        {
+            ep_app_error("Could not get info of parent directory of \"%s\": %d", filepath2, EP_STAT_DETAIL(estat));
+            goto failcloseandfree;
+        }
+        f2type = finfo.type;
+        if (f1type != f2type)
+        {
+            if (f2type == GDPFS_FILE_TYPE_REGULAR)
+                estat = GDPFS_STAT_FILE_EXISTS;
+            else
+                estat = GDPFS_STAT_DIR_EXISTS;
+            goto failcloseandfree;
+        }
+        if (f2type == GDPFS_FILE_TYPE_DIR)
+        {
+            // Check to make sure that the directory is empty
+            estat = gdpfs_dir_read(fh2, &dirent, 0);
+            if (!EP_STAT_ISOK(estat))
+            {
+                ep_app_error("Could not read parent directory of \"%s\": %d", filepath2, EP_STAT_DETAIL(estat));
+                goto failcloseandfree;
+            }
+            else if (EP_STAT_DETAIL(estat) != EP_STAT_DETAIL(GDPFS_STAT_EOF))
+            {
+                estat = GDPFS_STAT_DIR_NOT_EMPTY;
+                goto failcloseandfree;
+            }
+        }
+        gdpfs_file_close(fh2);
+    }
+    else if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Parent directory is corrupt:\"%s\": %d", filepath2, EP_STAT_DETAIL(estat));
+        goto failandfree;
+    }
+    
+    estat = dir_add_at_offset(fh, insert_offset, file, gname);
+    ep_mem_free(file_mem);
+    if (!EP_STAT_ISOK(estat))
+        return estat;
+    
+    return GDPFS_STAT_OK;
+    
+failcloseandfree:
+    gdpfs_file_close(fh2);
+failandfree:
+    ep_mem_free(file_mem);
+    return estat;
+}
+
 
 EP_STAT gdpfs_dir_remove_file_at_path(const char *filepath, gdpfs_file_mode_t mode)
 {
@@ -212,7 +308,7 @@ end:
     return estat;
 }
 
-EP_STAT gdpfs_find_insert_offset(off_t* offset_ptr, uint64_t fh, const char* name, gdpfs_file_gname_t gname_if_exists)
+static EP_STAT dir_find_insert_offset(off_t* offset_ptr, uint64_t fh, const char* name, gdpfs_file_gname_t gname_if_exists)
 {
     size_t size;
     off_t offset;
@@ -255,7 +351,7 @@ EP_STAT gdpfs_find_insert_offset(off_t* offset_ptr, uint64_t fh, const char* nam
     return GDPFS_STAT_OK;
 }
 
-EP_STAT gdpfs_dir_add_at_offset(uint64_t fh, off_t offset, const char *name, gdpfs_file_gname_t gname)
+static EP_STAT dir_add_at_offset(uint64_t fh, off_t offset, const char *name, gdpfs_file_gname_t gname)
 {
     size_t size;
     gdpfs_dir_entry_phys_t phys_ent;
