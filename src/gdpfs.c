@@ -99,11 +99,11 @@ fail0:
 }
 
 static int
-open_(const char *path, uint64_t *fh)
+open_(const char *path, uint64_t *fh, gdpfs_file_type_t type)
 {
     EP_STAT estat;
 
-    *fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_REGULAR);
+    *fh = gdpfs_dir_open_file_at_path(&estat, path, mode, type);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to open file at path:\"%s\"", path);
@@ -115,21 +115,13 @@ open_(const char *path, uint64_t *fh)
 static int
 gdpfs_open(const char *path, struct fuse_file_info *fi)
 {
-    return open_(path, &fi->fh);
+    return open_(path, &fi->fh, GDPFS_FILE_TYPE_REGULAR);
 }
 
 static int
 gdpfs_opendir(const char *path, struct fuse_file_info *fi)
 {
-    EP_STAT estat;
-
-    fi->fh = gdpfs_dir_open_file_at_path(&estat, path, mode, GDPFS_FILE_TYPE_DIR);
-    if (!EP_STAT_ISOK(estat))
-    {
-        ep_app_error("Failed to opendir at path:\"%s\"", path);
-        return -ENOENT;
-    }
-    return 0;
+    return open_(path, &fi->fh, GDPFS_FILE_TYPE_DIR);
 }
 
 static int
@@ -217,7 +209,7 @@ gdpfs_truncate(const char *file, off_t file_size)
     int res;
     uint64_t fh;
 
-    if ((res = open_(file, &fh)) != 0)
+    if ((res = open_(file, &fh, GDPFS_FILE_TYPE_REGULAR)) != 0)
         return res;
     res = gdpfs_file_ftruncate(fh, file_size);
     res = release_(file, fh) || res;
@@ -235,8 +227,8 @@ static int
 gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
 {
     EP_STAT estat;
-    gdpfs_file_gname_t newfile_gname;
     uint64_t fh;
+    gdpfs_log_gname_t existing_logname;
 
     (void)mode_;
 
@@ -245,20 +237,15 @@ gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
     if (filepath[strlen(filepath) - 1] == '/')
         return -EISDIR;
 
-    estat = gdpfs_file_create(&fh, newfile_gname, mode, GDPFS_FILE_TYPE_REGULAR);
-    if (!EP_STAT_ISOK(estat))
+    estat = gdpfs_dir_create_file_at_path(&fh, filepath, GDPFS_FILE_TYPE_REGULAR, existing_logname, mode);
+    if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
     {
-        return -ENOENT;
+        printf("Opening existing file\n");
+        fh = gdpfs_file_open_type(&estat, existing_logname, mode, GDPFS_FILE_TYPE_REGULAR);
     }
-
-    estat = gdpfs_dir_add_file_at_path(newfile_gname, filepath, mode);
     if (!EP_STAT_ISOK(estat))
-    {
         return -ENOENT;
-    }
-
     fi->fh = fh;
-
     return 0;
 }
 
@@ -283,27 +270,16 @@ static int
 gdpfs_mkdir(const char *filepath, mode_t mode_)
 {
     EP_STAT estat;
-    gdpfs_file_gname_t newfile_gname;
     uint64_t fh;
 
     (void)mode_;
 
     if (strlen(filepath) == 0)
         return -ENOENT;
-
-    estat = gdpfs_file_create(&fh, newfile_gname, mode, GDPFS_FILE_TYPE_DIR);
+        
+    estat = gdpfs_dir_create_file_at_path(&fh, filepath, GDPFS_FILE_TYPE_DIR, NULL, mode);
     if (!EP_STAT_ISOK(estat))
-    {
         return -ENOENT;
-    }
-    gdpfs_file_close(fh);
-
-    estat = gdpfs_dir_add_file_at_path(newfile_gname, filepath, mode);
-    if (!EP_STAT_ISOK(estat))
-    {
-        return -ENOENT;
-    }
-
     return 0;
 }
 
@@ -329,24 +305,28 @@ gdpfs_rename(const char *filepath1, const char *filepath2)
 {
     EP_STAT estat;
     uint64_t fh;
-    gdpfs_file_gname_t gname;
-    int rv = open_(filepath1, &fh);
+    int rv = open_(filepath1, &fh, GDPFS_FILE_TYPE_UNKNOWN);
     if (rv)
     {
         return -ENOENT;
     }
-    gdpfs_file_gname(fh, gname);
+    
+    estat = gdpfs_dir_replace_file_at_path(fh, filepath2, mode);
     gdpfs_file_close(fh);
-    estat = gdpfs_dir_add_file_at_path(gname, filepath2, mode);
-    if (!EP_STAT_ISOK(estat))
-    {
+    
+    if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+        return -ENOTDIR;
+    else if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_DIR_EXISTS))
+        return -EISDIR;
+    else if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_DIR_NOT_EMPTY))
+        return -ENOTEMPTY;
+    else if (!EP_STAT_ISOK(estat))
         return -ENOENT;
-    }
+    
     estat = gdpfs_dir_remove_file_at_path(filepath1, mode);
     if (!EP_STAT_ISOK(estat))
-    {
         return -ENOENT;
-    }
+        
     return 0;
 }
 

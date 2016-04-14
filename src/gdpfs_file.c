@@ -127,14 +127,14 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
     default:
         if (ret_stat)
             *ret_stat = GDPFS_STAT_INVLDPARAM;
-        goto fail1;
+        goto fail;
     }
 
     fh = bitmap_reserve(fhs);
     if (fh == -1)
     {
         stat = GDPFS_STAT_OOMEM;
-        goto fail1;
+        goto fail;
     }
 
     // TODO: use the mode as part of the key
@@ -149,7 +149,7 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         {
             if (ret_stat)
                 *ret_stat = GDPFS_STAT_OOMEM;
-            goto fail0;
+            goto failandfree;
         }
         ep_hash_insert(file_hash, sizeof(gdpfs_file_gname_t), log_name, file);
         stat = gdpfs_log_open(&file->log_handle, log_name, log_mode);
@@ -157,7 +157,7 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         {
             if (ret_stat)
                 *ret_stat = stat;
-            goto fail0;
+            goto faildeleteandfree;
         }
         file->mode = mode;
         file->hash_key = ep_mem_zalloc(sizeof(gdpfs_file_gname_t));
@@ -165,7 +165,7 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         {
             if (ret_stat)
                 *ret_stat = GDPFS_STAT_OOMEM;
-            goto fail0;
+            goto faildeleteandfree;
         }
         memcpy(file->hash_key, log_name, sizeof(gdpfs_file_gname_t));
         if (ret_stat != NULL)
@@ -188,14 +188,14 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
             {
                 if (ret_stat)
                     *ret_stat = GDPFS_STAT_INVLDFTYPE;
-                goto fail0;
+                goto faildeleteandfree;
             }
         }
         else if (current_type != type)
         {
             if (ret_stat)
                 *ret_stat = GDPFS_STAT_INVLDFTYPE;
-            goto fail0;
+            goto faildeleteandfree;
         }
     }
 
@@ -204,13 +204,15 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         *ret_stat = GDPFS_STAT_OK;
 
     return fh;
-
-fail0:
+    
+faildeleteandfree:
+    ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), log_name);
+failandfree:
     files[fh] = NULL;
     bitmap_release(fhs, fh);
     ep_mem_free(file->hash_key);
     ep_mem_free(file);
-fail1:
+fail:
     return -1;
 }
 
