@@ -33,13 +33,19 @@ gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
  * dir read/modify
  */
 EP_STAT
-gdpfs_dir_add_file_at_path(gdpfs_file_gname_t gname, const char *path);
+gdpfs_dir_open_parent_dir(uint64_t* fh, const char* filepath, char** file,
+		char** tofree);
+
+EP_STAT
+gdpfs_dir_create_file_at_path(uint64_t* fh, const char* filepath,
+		gdpfs_file_type_t type, gdpfs_file_gname_t gname_if_exists,
+		gdpfs_file_perm_t perm);
+
+EP_STAT
+gdpfs_dir_replace_file_at_path(uint64_t fh, const char *filepath2);
 
 EP_STAT
 gdpfs_dir_remove_file_at_path(const char *path);
-
-EP_STAT
-gdpfs_dir_add(uint64_t fh, const char *name,gdpfs_file_gname_t log_name);
 
 EP_STAT
 gdpfs_dir_remove(uint64_t fh, const char *name);
