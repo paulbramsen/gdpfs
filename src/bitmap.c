@@ -96,8 +96,6 @@ int bitmap_is_set(bitmap_t *bmp, uint64_t val)
     return (bmp->data[byte] >> bit) & 1;    
 }
 
-
-
 void bitmap_free(bitmap_t *bmp)
 {
     ep_mem_free(bmp);

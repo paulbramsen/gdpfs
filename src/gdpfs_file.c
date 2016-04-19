@@ -13,6 +13,8 @@
 #include "bitmap.h"
 #include "bitmap_file.h"
 #include <assert.h>
+#include <errno.h>
+#include <dirent.h>
 
 
 
@@ -48,7 +50,7 @@ typedef struct
 } gdpfs_fmeta_t;
 
 #define MAX_FHS 256
-const char *cache_dir = "/home/vagrant/gdpfs-cache";
+const char *cache_dir = "/tmp/gdpfs-cache";
 const char *bitmap_extension = "-bitmap";
 static bitmap_t *fhs;
 static gdpfs_file_t **files;
@@ -68,6 +70,8 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
 EP_STAT init_gdpfs_file()
 {
     EP_STAT estat;
+    DIR *dirp;
+    struct dirent *dp;
 
     files = ep_mem_zalloc(sizeof(gdpfs_file_t *) * MAX_FHS);
     if (files == NULL)
@@ -80,6 +84,20 @@ EP_STAT init_gdpfs_file()
         goto failoom;
     estat = init_gdpfs_log();
     // set up caching directory
+    if (mkdir(cache_dir, 0744) != 0 && errno != EEXIST)
+        goto failoom;
+    if ((dirp = opendir(cache_dir)) == NULL)
+        goto failoom;
+    do {
+        if ((dp = readdir(dirp)) != NULL)
+        {
+            char *unlink_path = malloc(strlen(cache_dir) 
+                                     + strlen("/") + strlen(dp->d_name) + 1);
+            sprintf(unlink_path, "%s/%s", cache_dir, dp->d_name);
+            unlink(unlink_path);
+            free(unlink_path);
+        }
+    } while (dp != NULL);
     return estat;
 
 failoom:
@@ -216,18 +234,10 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         if (access(cache_name, F_OK) != -1) 
         {
             file->cache_fd = open(cache_name, O_RDWR);
-            if (file->cache_fd == -1) 
-            {
-                perror("wut");
-            }
         }
         else 
         {
             file->cache_fd = open(cache_name, O_RDWR | O_CREAT | O_TRUNC, 0744);
-            if (file->cache_fd == -1) 
-            {
-                perror("wut");
-            }
         }
         if (access(cache_bitmap_name, F_OK) != -1) 
         {
@@ -236,10 +246,6 @@ static uint64_t open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name,
         else 
         {
             file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR | O_CREAT | O_TRUNC, 0744);
-            if (file->cache_bitmap_fd == -1) 
-            {
-                perror("wut");
-            }
         }
     }
     file->ref_count++;

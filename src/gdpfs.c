@@ -30,8 +30,6 @@ typedef struct gdpfs_entry gdpfs_entry_t;
 
 static gdpfs_file_mode_t mode;
 
-void debug() {};
-
 static int
 gdpfs_getattr(const char *path, struct stat *stbuf)
 {
@@ -159,9 +157,6 @@ static int
 gdpfs_read(const char *path, char *buf, size_t size, off_t offset,
            struct fuse_file_info *fi)
 {
-    if (strcmp(path, "/gdpfs/bin/build/gdpfs.o") == 0) {
-        debug();
-    }
     (void)path;
     return gdpfs_file_read(fi->fh, buf, size, offset);
 }
@@ -212,9 +207,6 @@ static int
 gdpfs_write(const char *path, const char *buf, size_t size, off_t offset,
             struct fuse_file_info *fi)
 {
-    if (strcmp(path, "/gdpfs/bin/build/gdpfs.o") == 0) {
-        debug();
-    }
     (void)path;
     return gdpfs_file_write(fi->fh, buf, size, offset);
 }
@@ -252,9 +244,6 @@ gdpfs_create(const char *filepath, mode_t mode_, struct fuse_file_info *fi)
         return -ENOENT;
     if (filepath[strlen(filepath) - 1] == '/')
         return -EISDIR;
-    if (strcmp(filepath, "/gdpfs/bin/build/gdpfs.o") == 0) {
-        debug();
-    }
 
     estat = gdpfs_file_create(&fh, newfile_gname, mode, GDPFS_FILE_TYPE_REGULAR);
     if (!EP_STAT_ISOK(estat))
