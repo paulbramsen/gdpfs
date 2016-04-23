@@ -30,7 +30,7 @@ typedef struct gdpfs_entry gdpfs_entry_t;
 
 static gdpfs_file_mode_t fs_mode;
 
-static inline gdpfs_file_perm_t extract_gdpfs_perm(mode_t mode)
+static inline gdpfs_file_perm_t gdpfs_extract_perm(mode_t mode)
 {
     return mode & (S_IRWXU | S_IRWXG | S_IRWXO);
 }
@@ -81,13 +81,14 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
             stbuf->st_mode &= ~(S_IWUSR | S_IWGRP | S_IWOTH);
             break;
         case GDPFS_FILE_MODE_RW:
-            // anythign goes so just use files stored permissions
+            // anything goes so just use files stored permissions
             break;
         case GDPFS_FILE_MODE_WO:
             // turn off all read bits
             stbuf->st_mode &= ~(S_IRUSR | S_IRGRP | S_IROTH);
             break;
         default:
+            ep_app_error("Bad file mode");
             goto fail0;
     }
 
@@ -117,12 +118,17 @@ _check_open_flags(uint64_t fh, int flags)
     flags &= (O_RDONLY | O_WRONLY | O_RDWR);
     if (O_RDONLY == flags)
         success = success && info.file_perm & S_IRUSR;
-    if (O_WRONLY == flags)
+    else if (O_WRONLY == flags)
         success = success && info.file_perm & S_IWUSR;
-    if (O_RDWR == flags)
+    else if (O_RDWR == flags)
     {
         success = success && info.file_perm & S_IRUSR;
         success = success && info.file_perm & S_IWUSR;
+    }
+    else
+    {
+        ep_app_error("Opening with invalid access flags.");
+        success = false;
     }
 
     return success;
@@ -283,7 +289,7 @@ gdpfs_create(const char *filepath, mode_t mode, struct fuse_file_info *fi)
         return -EISDIR;
 
     estat = gdpfs_dir_create_file_at_path(&fh, filepath, GDPFS_FILE_TYPE_REGULAR,
-            existing_logname, extract_gdpfs_perm(mode));
+            existing_logname, gdpfs_extract_perm(mode));
     if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
     {
         printf("Opening existing file\n");
@@ -322,7 +328,7 @@ gdpfs_mkdir(const char *filepath, mode_t mode)
     if (strlen(filepath) == 0)
         return -ENOENT;
 
-    estat = gdpfs_dir_create_file_at_path(&fh, filepath, GDPFS_FILE_TYPE_DIR, NULL, extract_gdpfs_perm(mode));
+    estat = gdpfs_dir_create_file_at_path(&fh, filepath, GDPFS_FILE_TYPE_DIR, NULL, gdpfs_extract_perm(mode));
 
     if (!EP_STAT_ISOK(estat))
         return -ENOENT;
@@ -417,7 +423,7 @@ gdpfs_chmod (const char *filepath, mode_t mode)
 
     if (_open(filepath, &fh, GDPFS_FILE_TYPE_UNKNOWN) != 0)
         return -ENOENT;
-    estat = gdpfs_file_set_perm(fh, extract_gdpfs_perm(mode));
+    estat = gdpfs_file_set_perm(fh, gdpfs_extract_perm(mode));
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to set permissions");

@@ -179,9 +179,7 @@ gdpfs_log_ent_t *gdpfs_log_ent_new()
 
     log_ent = ep_mem_zalloc(sizeof(gdpfs_log_ent_t));
     if (log_ent == NULL)
-    {
         goto fail0;
-    }
     log_ent->datum = gdp_datum_new();
     return log_ent;
 
