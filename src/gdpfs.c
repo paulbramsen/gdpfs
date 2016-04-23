@@ -290,7 +290,7 @@ gdpfs_create(const char *filepath, mode_t mode, struct fuse_file_info *fi)
 
     estat = gdpfs_dir_create_file_at_path(&fh, filepath, GDPFS_FILE_TYPE_REGULAR,
             existing_logname, gdpfs_extract_perm(mode));
-    if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+    if (EP_STAT_IS_SAME(estat, GDPFS_STAT_FILE_EXISTS))
     {
         printf("Opening existing file\n");
         fh = gdpfs_file_open_type(&estat, existing_logname, GDPFS_FILE_TYPE_REGULAR);
@@ -310,7 +310,7 @@ gdpfs_unlink(const char *filepath)
     if (strlen(filepath) == 0)
         return -ENOENT;
 
-    estat = gdpfs_dir_remove_file_at_path(filepath);
+    estat = gdpfs_dir_remove_file_at_path(filepath, GDPFS_FILE_TYPE_REGULAR);
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
@@ -343,7 +343,11 @@ gdpfs_rmdir(const char *filepath)
     if (strlen(filepath) == 0)
         return -ENOENT;
 
-    estat = gdpfs_dir_remove_file_at_path(filepath);
+    estat = gdpfs_dir_remove_file_at_path(filepath, GDPFS_FILE_TYPE_DIR);
+    if (EP_STAT_IS_SAME(estat, GDPFS_STAT_DIR_NOT_EMPTY))
+    {
+        return -ENOTEMPTY;
+    }
     if (!EP_STAT_ISOK(estat))
     {
         return -ENOENT;
@@ -366,16 +370,16 @@ gdpfs_rename(const char *filepath1, const char *filepath2)
     estat = gdpfs_dir_replace_file_at_path(fh, filepath2);
     gdpfs_file_close(fh);
 
-    if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+    if (EP_STAT_IS_SAME(estat, GDPFS_STAT_FILE_EXISTS))
         return -ENOTDIR;
-    else if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_DIR_EXISTS))
+    else if (EP_STAT_IS_SAME(estat, GDPFS_STAT_DIR_EXISTS))
         return -EISDIR;
-    else if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_DIR_NOT_EMPTY))
+    else if (EP_STAT_IS_SAME(estat, GDPFS_STAT_DIR_NOT_EMPTY))
         return -ENOTEMPTY;
     else if (!EP_STAT_ISOK(estat))
         return -ENOENT;
 
-    estat = gdpfs_dir_remove_file_at_path(filepath1);
+    estat = gdpfs_dir_remove_file_at_path(filepath1, GDPFS_FILE_TYPE_UNKNOWN);
 
     if (!EP_STAT_ISOK(estat))
         return -ENOENT;
