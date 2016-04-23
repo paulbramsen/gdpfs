@@ -215,6 +215,11 @@ fail:
     return estat;
 }
 
+/** Create a directory entry for FH at the specified path, replacing the
+  * existing directory entry if one exists. If one exists, checks are made
+  * to ensure that the new directory entry is the same type as the old one
+  * and that if both are directories, then the one being replaced is empty.
+  */
 EP_STAT
 gdpfs_dir_replace_file_at_path(uint64_t fh, const char *filepath2)
 {
