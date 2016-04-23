@@ -97,11 +97,11 @@ init_gdpfs_file(gdpfs_file_mode_t fs_mode)
     do {
         if ((dp = readdir(dirp)) != NULL)
         {
-            char *unlink_path = malloc(strlen(CACHE_DIR)
+            char *unlink_path = ep_mem_zalloc(strlen(CACHE_DIR)
                                      + strlen("/") + strlen(dp->d_name) + 1);
             sprintf(unlink_path, "%s/%s", CACHE_DIR, dp->d_name);
             unlink(unlink_path);
-            free(unlink_path);
+            ep_mem_free(unlink_path);
         }
     } while (dp != NULL);
     return GDPFS_STAT_OK;
@@ -296,10 +296,9 @@ fail0:
         ep_mem_free(file->hash_key);
         ep_mem_free(file);
     }
-fail1:
-    return -1;
 fail2:
     gdpfs_file_close(fh);
+fail1:
     return -1;
 }
 
@@ -339,10 +338,10 @@ gdpfs_file_close(uint64_t fh)
     {
         ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
         estat = gdpfs_log_close(file->log_handle);
-        ep_mem_free(file->hash_key);
-        ep_mem_free(file);
         close(file->cache_fd);
         close(file->cache_bitmap_fd);
+        ep_mem_free(file->hash_key);
+        ep_mem_free(file);
     }
     else
         estat = GDPFS_STAT_OK;
@@ -661,12 +660,12 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
             {
                 if ((write(file->cache_fd, buffer + byte, 1) != 1))
                 {
-                    free(bitmap);
+                    bitmap_free(bitmap);
                     goto fail0;
                 }
             }
         }
-        free(bitmap);
+        bitmap_free(bitmap);
     }
     estat = GDPFS_STAT_OK;
     return estat;
@@ -687,7 +686,7 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
     {
         if (!bitmap_is_set(bitmap, byte))
         {
-            free(bitmap);
+            bitmap_free(bitmap);
             goto fail0;
         }
     }
