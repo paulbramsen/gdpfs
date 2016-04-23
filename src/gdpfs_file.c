@@ -246,6 +246,8 @@ gdpfs_file_close(uint64_t fh)
         estat = gdpfs_log_close(file->log_handle);
         ep_mem_free(file->hash_key);
         ep_mem_free(file);
+    } else {
+        estat = GDPFS_STAT_OK;
     }
     return estat;
 }

@@ -41,12 +41,15 @@ EP_STAT
 gdpfs_dir_replace_file_at_path(uint64_t fh, const char *filepath2);
 
 EP_STAT
-gdpfs_dir_remove_file_at_path(const char *path);
+gdpfs_dir_remove_file_at_path(const char *path, gdpfs_file_type_t type);
 
 EP_STAT
-gdpfs_dir_remove(uint64_t fh, const char *name);
+gdpfs_dir_remove(uint64_t fh, const char *name, gdpfs_file_type_t type);
 
 EP_STAT
 gdpfs_dir_read(uint64_t fh, gdpfs_dir_entry_t *ent, off_t offset);
+
+EP_STAT
+gdpfs_dir_isempty(bool* isempty, uint64_t fh);
 
 #endif // _GDPFS_DIR_H_
