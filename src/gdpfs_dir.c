@@ -97,7 +97,7 @@ gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
             offset = 0;
             estat = _find_insert_offset(&offset, fh, name, &phys_ent);
             gdpfs_file_close(fh);
-            if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+            if (EP_STAT_IS_SAME(estat, GDPFS_STAT_FILE_EXISTS))
             {
                 if (path[0] == '\0')
                     curr_type = type;
@@ -185,9 +185,10 @@ gdpfs_dir_create_file_at_path(uint64_t* fh, const char* filepath,
     estat = _find_insert_offset(&insert_offset, dirfh, file, &phys_ent);
     if (!EP_STAT_ISOK(estat))
     {
-        if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+        if (EP_STAT_IS_SAME(estat, GDPFS_STAT_FILE_EXISTS))
             memcpy(gname_if_exists, phys_ent.gname, sizeof(gdpfs_file_gname_t));
-        ep_app_error("Failed to find insert offset for file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
+        else
+            ep_app_error("Failed to find insert offset for file:\"%s\": %d", filepath, EP_STAT_DETAIL(estat));
         goto fail;
     }
 
@@ -245,7 +246,7 @@ gdpfs_dir_replace_file_at_path(uint64_t fh, const char *filepath2)
         return estat;
 
     estat = _find_insert_offset(&insert_offset, fh, file, &existing_phys_ent);
-    if (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+    if (EP_STAT_IS_SAME(estat, GDPFS_STAT_FILE_EXISTS))
     {
         fh2 = gdpfs_file_open(&estat, existing_phys_ent.gname);
         if (!EP_STAT_ISOK(estat))
@@ -410,7 +411,7 @@ gdpfs_dir_remove(uint64_t fh, const char *name, gdpfs_file_type_t type)
     estat = GDPFS_STAT_NOTFOUND;
     
     estat = _find_insert_offset(&offset, fh, name, &phys_ent);
-    if (EP_STAT_DETAIL(estat) != EP_STAT_DETAIL(GDPFS_STAT_FILE_EXISTS))
+    if (!EP_STAT_IS_SAME(estat, GDPFS_STAT_FILE_EXISTS))
     {
         ep_app_error("Could not find directory entry for %s: %d\n", name, EP_STAT_DETAIL(estat));
         return estat;
@@ -494,7 +495,7 @@ gdpfs_dir_isempty(bool* isempty, uint64_t fh)
         ep_app_error("Could not read directory: %d", EP_STAT_DETAIL(estat));
         return estat;
     }
-    *isempty = (EP_STAT_DETAIL(estat) == EP_STAT_DETAIL(GDPFS_STAT_EOF));
+    *isempty = EP_STAT_IS_SAME(estat, GDPFS_STAT_EOF);
     if (!*isempty)
         printf("Found a file named %s\n", dirent.name);
     return GDPFS_STAT_OK;
