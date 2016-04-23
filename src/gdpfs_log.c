@@ -72,6 +72,7 @@ EP_STAT gdpfs_log_create(gdp_name_t log_iname)
 
     // TODO create a keypair and use it for this log
 
+    printf("Creating file\n");
     estat = gdp_gcl_create(NULL, logd_iname, gmd, &gcl);
     if (!EP_STAT_ISOK(estat))
     {

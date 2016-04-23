@@ -351,7 +351,7 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
 {
     EP_STAT estat;
     gdpfs_file_t *file;
-    size_t written;
+    size_t written = 0;
     gdpfs_log_ent_t *log_ent;
     gdpfs_fmeta_t entry = {
         .file_size  = info->file_size,
@@ -370,29 +370,19 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
 
     log_ent = gdpfs_log_ent_new();
     if (!log_ent)
-    {
-        written = 0;
         goto fail0;
-    }
     if (gdpfs_log_ent_write(log_ent, &entry, sizeof(gdpfs_fmeta_t)) != 0)
-        goto fail0;
+        goto done;
     if (gdpfs_log_ent_write(log_ent, buf, size) != 0)
-        goto fail0;
+        goto done;
 
     estat = gdpfs_log_append(file->log_handle, log_ent);
-    if (!EP_STAT_ISOK(estat))
-    {
-        written = 0;
-    }
-    else
-    {
+    if (EP_STAT_ISOK(estat))
         written = size;
-    }
 
+done:
     // remember to free our resources
     gdpfs_log_ent_close(log_ent);
-    return written;
-
 fail0:
     return written;
 }

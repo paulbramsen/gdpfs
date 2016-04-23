@@ -187,7 +187,6 @@ gdpfs_dir_create_file_at_path(uint64_t* fh, const char* filepath,
         return estat;
     }
 
-    printf("Adding file %s\n", filepath);
     estat = _find_insert_offset(&insert_offset, dirfh, file, gname_if_exists);
     if (!EP_STAT_ISOK(estat))
     {
