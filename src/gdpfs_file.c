@@ -50,8 +50,8 @@ typedef struct
 } gdpfs_fmeta_t;
 
 #define MAX_FHS 256
-const char *cache_dir = "/tmp/gdpfs-cache";
-const char *bitmap_extension = "-bitmap";
+const char * const CACHE_DIR = "/tmp/gdpfs-cache";
+const char * const BITMAP_EXTENSION = "-bitmap";
 static bitmap_t *fhs;
 static gdpfs_file_t **files;
 static EP_HASH *file_hash;
@@ -90,17 +90,16 @@ init_gdpfs_file(gdpfs_file_mode_t fs_mode)
 
     // set up caching directory
     estat = GDPFS_STAT_LOCAL_FS_FAIL;
-    if (mkdir(cache_dir, 0744) != 0 && errno != EEXIST)
+    if (mkdir(CACHE_DIR, 0744) != 0 && errno != EEXIST)
         goto fail0;
-    if ((dirp = opendir(cache_dir)) == NULL)
+    if ((dirp = opendir(CACHE_DIR)) == NULL)
         goto fail0;
     do {
-        // should probably change this to soemthing like system("rm -rf %s", cache_dir)
         if ((dp = readdir(dirp)) != NULL)
         {
-            char *unlink_path = malloc(strlen(cache_dir)
+            char *unlink_path = malloc(strlen(CACHE_DIR)
                                      + strlen("/") + strlen(dp->d_name) + 1);
-            sprintf(unlink_path, "%s/%s", cache_dir, dp->d_name);
+            sprintf(unlink_path, "%s/%s", CACHE_DIR, dp->d_name);
             unlink(unlink_path);
             free(unlink_path);
         }
@@ -200,23 +199,23 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
 
         // Initialize cache_name and cache_bitmap names
         gdp_printable_name(log_name, printable);
-        if ((cache_name = ep_mem_zalloc(strlen(cache_dir) + strlen("/")
+        if ((cache_name = ep_mem_zalloc(strlen(CACHE_DIR) + strlen("/")
                 + strlen(printable) + 1)) == 0)
         {
             if (ret_stat)
                 *ret_stat = GDPFS_STAT_OOMEM;
             goto fail0;
         }
-        sprintf(cache_name, "%s%s%s", cache_dir, "/", printable);
-        if ((cache_bitmap_name = ep_mem_zalloc(strlen(cache_dir) + strlen("/")
-                + strlen(printable) + strlen(bitmap_extension) + 1)) == 0)
+        sprintf(cache_name, "%s%s%s", CACHE_DIR, "/", printable);
+        if ((cache_bitmap_name = ep_mem_zalloc(strlen(CACHE_DIR) + strlen("/")
+                + strlen(printable) + strlen(BITMAP_EXTENSION) + 1)) == 0)
         {
             if (ret_stat)
                 *ret_stat = GDPFS_STAT_OOMEM;
             goto fail0;
         }
-        sprintf(cache_bitmap_name, "%s%s%s%s", cache_dir, "/",
-                printable, bitmap_extension);
+        sprintf(cache_bitmap_name, "%s%s%s%s", CACHE_DIR, "/",
+                printable, BITMAP_EXTENSION);
 
         // Check for existence of cache files. If they're there then we open them
         // and put them in the file struct otherwise create the corresponding files
