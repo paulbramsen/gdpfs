@@ -80,6 +80,7 @@ int bitmap_set(bitmap_t *bmp, uint64_t val) {
     if (((field >> bit) & 1) != 0)
         return -1;
     bmp->data[byte] |= (1 << bit);
+    return 0;
 }
 
 int bitmap_is_set(bitmap_t *bmp, uint64_t val)
@@ -93,7 +94,7 @@ int bitmap_is_set(bitmap_t *bmp, uint64_t val)
         return -1;
     byte = val / 8;
     bit = val % 8;
-    return (bmp->data[byte] >> bit) & 1;    
+    return (bmp->data[byte] >> bit) & 1;
 }
 
 void bitmap_free(bitmap_t *bmp)

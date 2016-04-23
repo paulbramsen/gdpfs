@@ -268,7 +268,7 @@ size_t gdpfs_log_ent_read(gdpfs_log_ent_t *ent, void *buf, size_t size)
     }
 }
 /*
- *  Read size bytes from ent into buf. Difference between read is that peek does 
+ *  Read size bytes from ent into buf. Difference between read is that peek does
  *  not advance pointer in buffer
  */
 size_t gdpfs_log_ent_peek(gdpfs_log_ent_t *ent, void *buf, size_t size)

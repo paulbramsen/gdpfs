@@ -5,7 +5,7 @@
 /**
  * Set bits [left, right) to 1
  */
-void bitmap_file_set_range(int fd, off_t left, off_t right) 
+void bitmap_file_set_range(int fd, off_t left, off_t right)
 {
     off_t extended_left;
     off_t extended_right;
@@ -18,19 +18,22 @@ void bitmap_file_set_range(int fd, off_t left, off_t right)
     extended_right = right + 8 - right % 8;
     extended_size = extended_right - extended_left;
     bitmap = bitmap_create(extended_size);
-    for (byte = left - extended_left; byte < right - extended_left; byte++) 
+    // TODO: error check
+    for (byte = left - extended_left; byte < right - extended_left; byte++)
     {
         bitmap_set(bitmap, byte);
     }
     lseek(fd, SEEK_SET, extended_left / 8);
     size = write(fd, bitmap->data, (extended_size) / 8);
+    (void)size;
+    // TODO: error check
     bitmap_free(bitmap);
 }
 
 /**
  * Gets a bitmap from [left, right). Must free returned bitmap.
  */
-bitmap_t *bitmap_file_get_range(int fd, off_t left, off_t right) 
+bitmap_t *bitmap_file_get_range(int fd, off_t left, off_t right)
 {
     off_t extended_left;
     off_t extended_right;
@@ -38,6 +41,7 @@ bitmap_t *bitmap_file_get_range(int fd, off_t left, off_t right)
     ssize_t size;
     off_t byte;
 
+    // TODO: this should error check
     extended_left = left - left % 8;
     extended_right = right + 8 - right % 8;
     extended_size = extended_right - extended_left;
