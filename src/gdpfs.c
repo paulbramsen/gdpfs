@@ -39,27 +39,27 @@ static int
 gdpfs_getattr(const char *path, struct stat *stbuf)
 {
     EP_STAT estat;
-    gdpfs_file_info_t info;
+    gdpfs_file_info_t* info;
     uint64_t fh;
 
     fh = gdpfs_dir_open_file_at_path(&estat, path, GDPFS_FILE_TYPE_UNKNOWN);
     if (!EP_STAT_ISOK(estat))
         return -ENOENT;
     // TODO: if fh is -1 deal with it.
-    estat = gdpfs_file_info(fh, &info);
+    estat = gdpfs_file_get_info(&info, fh);
     if (!EP_STAT_ISOK(estat))
         goto fail0;
 
     memset(stbuf, 0, sizeof(struct stat));
     stbuf->st_nlink = 1; // TODO: figure out a sane value for this
-    stbuf->st_size = info.file_size;
+    stbuf->st_size = info->file_size;
     stbuf->st_uid = getuid();
     stbuf->st_gid = getgid();
 
     // set mode
     stbuf->st_mode = 0;
     // handle type
-    switch(info.file_type)
+    switch(info->file_type)
     {
         case GDPFS_FILE_TYPE_REGULAR:
             stbuf->st_mode |= S_IFREG;
@@ -73,7 +73,7 @@ gdpfs_getattr(const char *path, struct stat *stbuf)
     }
 
     // handle permissions
-    stbuf->st_mode |= info.file_perm;
+    stbuf->st_mode |= info->file_perm;
     switch (fs_mode)
     {
         case GDPFS_FILE_MODE_RO:
@@ -104,10 +104,10 @@ static bool
 _check_open_flags(uint64_t fh, int flags)
 {
     EP_STAT estat;
-    gdpfs_file_info_t info;
+    gdpfs_file_info_t* info;
     bool success = true;
 
-    estat = gdpfs_file_info(fh, &info);
+    estat = gdpfs_file_get_info(&info, fh);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to get file info.");
@@ -117,13 +117,13 @@ _check_open_flags(uint64_t fh, int flags)
     // TODO: need to check group/user
     flags &= (O_RDONLY | O_WRONLY | O_RDWR);
     if (O_RDONLY == flags)
-        success = success && info.file_perm & S_IRUSR;
+        success = success && info->file_perm & S_IRUSR;
     else if (O_WRONLY == flags)
-        success = success && info.file_perm & S_IWUSR;
+        success = success && info->file_perm & S_IWUSR;
     else if (O_RDWR == flags)
     {
-        success = success && info.file_perm & S_IRUSR;
-        success = success && info.file_perm & S_IWUSR;
+        success = success && info->file_perm & S_IRUSR;
+        success = success && info->file_perm & S_IWUSR;
     }
     else
     {
@@ -392,13 +392,13 @@ gdpfs_access(const char *filepath, int mode)
 {
     EP_STAT estat;
     uint64_t fh;
-    gdpfs_file_info_t info;
+    gdpfs_file_info_t* info;
     bool success = true;
 
     // _open should fail if file doesn't exist
     if (_open(filepath, &fh, GDPFS_FILE_TYPE_UNKNOWN) != 0)
         return -1;
-    estat = gdpfs_file_info(fh, &info);
+    estat = gdpfs_file_get_info(&info, fh);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to get file info.");
@@ -407,11 +407,11 @@ gdpfs_access(const char *filepath, int mode)
     }
     // TODO: need to check group/user
     if (R_OK & mode)
-        success = success && info.file_perm & S_IRUSR;
+        success = success && info->file_perm & S_IRUSR;
     if (W_OK & mode)
-        success = success && info.file_perm & S_IWUSR;
+        success = success && info->file_perm & S_IWUSR;
     if (X_OK & mode)
-        success = success && info.file_perm & S_IXUSR;
+        success = success && info->file_perm & S_IXUSR;
 fail0:
     _release(filepath, fh);
     if (success)

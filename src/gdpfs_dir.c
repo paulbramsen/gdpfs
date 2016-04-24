@@ -226,7 +226,7 @@ gdpfs_dir_replace_file_at_path(uint64_t fh, const char *filepath2)
 {
     EP_STAT estat;
     uint64_t fh2;
-    gdpfs_file_info_t finfo;
+    gdpfs_file_info_t* finfo;
     gdpfs_file_type_t f1type;
     gdpfs_file_type_t f2type;
     gdpfs_file_gname_t gname;
@@ -235,11 +235,11 @@ gdpfs_dir_replace_file_at_path(uint64_t fh, const char *filepath2)
     gdpfs_dir_entry_phys_t existing_phys_ent;
 
     gdpfs_file_gname(fh, gname);
-    estat = gdpfs_file_info(fh, &finfo);
+    estat = gdpfs_file_get_info(&finfo, fh);
     if (!EP_STAT_ISOK(estat))
         return estat;
 
-    f1type = finfo.file_type;
+    f1type = finfo->file_type;
 
     estat = _open_parent_dir(&fh, filepath2, &file, &file_mem);
     if (!EP_STAT_ISOK(estat))
@@ -254,13 +254,13 @@ gdpfs_dir_replace_file_at_path(uint64_t fh, const char *filepath2)
             ep_app_error("Could not open parent directory of \"%s\": %d", filepath2, EP_STAT_DETAIL(estat));
             goto failandfree;
         }
-        estat = gdpfs_file_info(fh2, &finfo);
+        estat = gdpfs_file_get_info(&finfo, fh2);
         if (!EP_STAT_ISOK(estat))
         {
             ep_app_error("Could not get info of parent directory of \"%s\": %d", filepath2, EP_STAT_DETAIL(estat));
             goto failcloseandfree;
         }
-        f2type = finfo.file_type;
+        f2type = finfo->file_type;
         if (f1type != f2type)
         {
             if (f2type == GDPFS_FILE_TYPE_REGULAR)
