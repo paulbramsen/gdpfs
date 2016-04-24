@@ -36,7 +36,7 @@ typedef struct gdpfs_file_info
  * global file subsystem intiailization
  */
 EP_STAT
-init_gdpfs_file(gdpfs_file_mode_t fs_mode);
+init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool use_cache);
 
 void
 stop_gdpfs_file();

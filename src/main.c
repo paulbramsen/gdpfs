@@ -50,7 +50,7 @@ main(int argc, char *argv[])
          fuseargc--);
     argc -= fuseargc;
 
-    while ((opt = getopt(argc, argv, "hr::")) > 0)
+    while ((opt = getopt(argc, argv, "hrd::")) > 0)
     {
         switch (opt)
         {
