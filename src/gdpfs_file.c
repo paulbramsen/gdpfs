@@ -55,6 +55,7 @@ const char * const BITMAP_EXTENSION = "-bitmap";
 static bitmap_t *fhs;
 static gdpfs_file_t **files;
 static EP_HASH *file_hash;
+static bool use_cache;
 
 // Private Functions
 static size_t do_write(uint64_t fh, const char *buf,
@@ -67,11 +68,13 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
 
 
 EP_STAT
-init_gdpfs_file(gdpfs_file_mode_t fs_mode)
+init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
 {
     EP_STAT estat;
     DIR *dirp;
     struct dirent *dp;
+
+    use_cache = _use_cache;
 
     estat = GDPFS_STAT_OOMEM;
     files = ep_mem_zalloc(sizeof(gdpfs_file_t *) * MAX_FHS);
@@ -88,22 +91,25 @@ init_gdpfs_file(gdpfs_file_mode_t fs_mode)
     if (!EP_STAT_ISOK(estat))
         goto fail0;
 
-    // set up caching directory
-    estat = GDPFS_STAT_LOCAL_FS_FAIL;
-    if (mkdir(CACHE_DIR, 0744) != 0 && errno != EEXIST)
-        goto fail0;
-    if ((dirp = opendir(CACHE_DIR)) == NULL)
-        goto fail0;
-    do {
-        if ((dp = readdir(dirp)) != NULL)
-        {
-            char *unlink_path = ep_mem_zalloc(strlen(CACHE_DIR)
-                                     + strlen("/") + strlen(dp->d_name) + 1);
-            sprintf(unlink_path, "%s/%s", CACHE_DIR, dp->d_name);
-            unlink(unlink_path);
-            ep_mem_free(unlink_path);
-        }
-    } while (dp != NULL);
+    if (use_cache)
+    {
+        // set up caching directory
+        estat = GDPFS_STAT_LOCAL_FS_FAIL;
+        if (mkdir(CACHE_DIR, 0744) != 0 && errno != EEXIST)
+            goto fail0;
+        if ((dirp = opendir(CACHE_DIR)) == NULL)
+            goto fail0;
+        do {
+            if ((dp = readdir(dirp)) != NULL)
+            {
+                char *unlink_path = ep_mem_zalloc(strlen(CACHE_DIR)
+                                         + strlen("/") + strlen(dp->d_name) + 1);
+                sprintf(unlink_path, "%s/%s", CACHE_DIR, dp->d_name);
+                unlink(unlink_path);
+                ep_mem_free(unlink_path);
+            }
+        } while (dp != NULL);
+    }
     return GDPFS_STAT_OK;
 
 fail0:
@@ -197,47 +203,50 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
         }
         memcpy(file->hash_key, log_name, sizeof(gdpfs_file_gname_t));
 
-        // Initialize cache_name and cache_bitmap names
-        gdp_printable_name(log_name, printable);
-        if ((cache_name = ep_mem_zalloc(strlen(CACHE_DIR) + strlen("/")
-                + strlen(printable) + 1)) == 0)
+        if (use_cache)
         {
-            if (ret_stat)
-                *ret_stat = GDPFS_STAT_OOMEM;
-            goto fail0;
-        }
-        sprintf(cache_name, "%s%s%s", CACHE_DIR, "/", printable);
-        if ((cache_bitmap_name = ep_mem_zalloc(strlen(CACHE_DIR) + strlen("/")
-                + strlen(printable) + strlen(BITMAP_EXTENSION) + 1)) == 0)
-        {
-            if (ret_stat)
-                *ret_stat = GDPFS_STAT_OOMEM;
-            goto fail0;
-        }
-        sprintf(cache_bitmap_name, "%s%s%s%s", CACHE_DIR, "/",
-                printable, BITMAP_EXTENSION);
+            // Initialize cache_name and cache_bitmap names
+            gdp_printable_name(log_name, printable);
+            if ((cache_name = ep_mem_zalloc(strlen(CACHE_DIR) + strlen("/")
+                    + strlen(printable) + 1)) == 0)
+            {
+                if (ret_stat)
+                    *ret_stat = GDPFS_STAT_OOMEM;
+                goto fail0;
+            }
+            sprintf(cache_name, "%s%s%s", CACHE_DIR, "/", printable);
+            if ((cache_bitmap_name = ep_mem_zalloc(strlen(CACHE_DIR) + strlen("/")
+                    + strlen(printable) + strlen(BITMAP_EXTENSION) + 1)) == 0)
+            {
+                if (ret_stat)
+                    *ret_stat = GDPFS_STAT_OOMEM;
+                goto fail0;
+            }
+            sprintf(cache_bitmap_name, "%s%s%s%s", CACHE_DIR, "/",
+                    printable, BITMAP_EXTENSION);
 
-        // Check for existence of cache files. If they're there then we open them
-        // and put them in the file struct otherwise create the corresponding files
-        // TODO: consolidate this, eliminate reace conditions
-        if (access(cache_name, F_OK) != -1)
-        {
-            file->cache_fd = open(cache_name, O_RDWR);
+            // Check for existence of cache files. If they're there then we open them
+            // and put them in the file struct otherwise create the corresponding files
+            // TODO: consolidate this, eliminate reace conditions
+            if (access(cache_name, F_OK) != -1)
+            {
+                file->cache_fd = open(cache_name, O_RDWR);
+            }
+            else
+            {
+                file->cache_fd = open(cache_name, O_RDWR | O_CREAT | O_TRUNC, 0744);
+            }
+            if (access(cache_bitmap_name, F_OK) != -1)
+            {
+                file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR);
+            }
+            else
+            {
+                file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR | O_CREAT | O_TRUNC, 0744);
+            }
+            ep_mem_free(cache_name);
+            ep_mem_free(cache_bitmap_name);
         }
-        else
-        {
-            file->cache_fd = open(cache_name, O_RDWR | O_CREAT | O_TRUNC, 0744);
-        }
-        if (access(cache_bitmap_name, F_OK) != -1)
-        {
-            file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR);
-        }
-        else
-        {
-            file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR | O_CREAT | O_TRUNC, 0744);
-        }
-        ep_mem_free(cache_name);
-        ep_mem_free(cache_bitmap_name);
 
         // add to hash table at very end to make handling failure cases easier
         ep_hash_insert(file_hash, sizeof(gdpfs_file_gname_t), log_name, file);
@@ -289,8 +298,11 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
 
 fail0:
     bitmap_release(fhs, fh);
-    ep_mem_free(cache_name);
-    ep_mem_free(cache_bitmap_name);
+    if (use_cache)
+    {
+        ep_mem_free(cache_name);
+        ep_mem_free(cache_bitmap_name);
+    }
     if (file)
     {
         ep_mem_free(file->hash_key);
@@ -338,8 +350,11 @@ gdpfs_file_close(uint64_t fh)
     {
         ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
         estat = gdpfs_log_close(file->log_handle);
-        close(file->cache_fd);
-        close(file->cache_bitmap_fd);
+        if (use_cache)
+        {
+            close(file->cache_fd);
+            close(file->cache_bitmap_fd);
+        }
         ep_mem_free(file->hash_key);
         ep_mem_free(file);
     }
@@ -383,7 +398,7 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
         ep_app_error("Corrupt log entry.");
         goto fail0;
     }
-    // fill in cache
+    // TODO: fill in cache on reads
 
     // limit read size to file size. Even though we may encounter a larger file
     // size deeper down, we don't want to read its data since that means that
@@ -432,11 +447,11 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
     file = lookup_fh(fh);
     if (file == NULL)
         return 0;
+
     // check cache
-    if (gdpfs_file_get_cache(file, buf, size, offset))
-    {
+    if (use_cache && gdpfs_file_get_cache(file, buf, size, offset))
         return size;
-    }
+
 
     memset(buf, 0, size);
     return do_read_starting_at_rec_no(files[fh], buf, size, offset, -1);
@@ -485,8 +500,10 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     {
         written = size;
 
+
         // Write to cache. true is for overwriting cache
-        gdpfs_file_fill_cache(file, buf, size, offset, true);
+        if (use_cache)
+            gdpfs_file_fill_cache(file, buf, size, offset, true);
     }
 
 fail0:
@@ -643,6 +660,12 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
     off_t byte;
     bitmap_t *bitmap;
 
+    if (!use_cache)
+    {
+        ep_app_error("Illegal call to gdpfs_file_fill_cache with cache disabled.");
+        return GDPFS_STAT_INVLDMODE;
+    }
+
     if (overwrite)
     {
         if (lseek(file->cache_fd, SEEK_SET, offset) < 0)
@@ -680,6 +703,12 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
 {
     off_t byte;
     bitmap_t *bitmap;
+
+    if (!use_cache)
+    {
+        ep_app_error("Illegal call to gdpfs_file_fill_cache with cache disabled.");
+        return false;
+    }
 
     bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);
     for (byte = 0; byte < size; byte++)
