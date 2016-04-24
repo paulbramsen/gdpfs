@@ -13,11 +13,6 @@ struct gdpfs_log
     gdpfs_log_gname_t gname;
 };
 
-struct gdpfs_log_ent
-{
-    gdp_datum_t *datum;
-};
-
 EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode)
 {
     EP_STAT estat;
@@ -150,12 +145,7 @@ EP_STAT gdpfs_log_close(gdpfs_log_t *handle)
     return estat;
 }
 
-static void dummy_response(gdp_event_t* ev)
-{
-    printf("I got a response! User data is %p\n", gdp_event_getudata(ev));
-}
-
-EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent)
+EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent, gdpfs_callback_t cb, void *udata)
 {
     EP_STAT estat;
 
@@ -164,8 +154,16 @@ EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent)
         ep_app_error("Cannot append to log in RO mode");
         return GDPFS_STAT_BADLOGMODE;
     }
-    estat = gdp_gcl_append_async(handle->gcl_handle, ent->datum, dummy_response, NULL);
+    /*printf("Appending ");
+    gdp_datum_print(ent->datum,	// message to print
+					stdout,					// file to print it to
+					0);*/
+    estat = gdp_gcl_append_async(handle->gcl_handle, ent->datum, cb, udata);
     //estat = gdp_gcl_append(handle->gcl_handle, ent->datum);
+    /*printf("Appended ");
+    gdp_datum_print(ent->datum,	// message to print
+					stdout,					// file to print it to
+					0);*/
     if (!EP_STAT_ISOK(estat))
     {
         char sbuf[100];
@@ -191,6 +189,7 @@ gdpfs_log_ent_t *gdpfs_log_ent_new()
     return log_ent;
 
 fail0:
+    printf("Memory allocation failed!\n");
     return log_ent;
 }
 

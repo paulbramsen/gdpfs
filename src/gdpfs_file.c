@@ -69,6 +69,8 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         off_t offset);
 static EP_STAT _file_load_info_cache(gdpfs_file_t* file);
 static EP_STAT _file_get_info_raw(gdpfs_file_info_t** info, gdpfs_file_t* file);
+EP_STAT _file_unref(gdpfs_file_t* file);
+void _file_ref(gdpfs_file_t* file);
 
 EP_STAT
 init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
@@ -244,7 +246,7 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
         ep_hash_insert(file_hash, sizeof(gdpfs_file_gname_t), log_name, file);
 
     }
-    file->ref_count++;
+    _file_ref(file);
     files[fh] = file;
 
 
@@ -332,7 +334,6 @@ gdpfs_file_open_init(EP_STAT *ret_stat, gdpfs_file_gname_t name,
 EP_STAT
 gdpfs_file_close(uint64_t fh)
 {
-    EP_STAT estat;
     gdpfs_file_t *file;
 
     file = lookup_fh(fh);
@@ -340,7 +341,13 @@ gdpfs_file_close(uint64_t fh)
         return GDPFS_STAT_BADFH;
     bitmap_release(fhs, fh);
 
+    return _file_unref(file);
+}
 
+EP_STAT
+_file_unref(gdpfs_file_t* file)
+{
+    EP_STAT estat;
     if (--file->ref_count == 0)
     {
         ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
@@ -356,6 +363,12 @@ gdpfs_file_close(uint64_t fh)
     else
         estat = GDPFS_STAT_OK;
     return estat;
+}
+
+void
+_file_ref(gdpfs_file_t* file)
+{
+    file->ref_count++;
 }
 
 static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t size,
@@ -390,7 +403,7 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
     if (gdpfs_log_ent_read(log_ent, &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
         || data_size != sizeof(gdpfs_fmeta_t) + entry.ent_size)
     {
-        ep_app_error("Corrupt log entry.");
+        ep_app_error("Corrupt log entry in file.");
         goto fail0;
     }
     // TODO: fill in cache on reads
@@ -458,6 +471,23 @@ gdpfs_file_read(uint64_t fh, void *buf, size_t size, off_t offset)
     return do_read(fh, buf, size, offset);
 }
 
+static void free_fileref(gdp_event_t* ev)
+{
+    EP_STAT estat;
+    //gdpfs_file_t* file = gdp_event_getudata(ev);
+    estat = gdp_event_getstat(ev);
+    if (!EP_STAT_ISOK(estat))
+        ep_app_error("Coult not properly append: %d", EP_STAT_DETAIL(estat));
+    //estat = _file_unref(file);
+    //if (!EP_STAT_ISOK(estat))
+    //    ep_app_error("Could not unreference file at %p", file);
+//    gdp_datum_t* appended_datum = gdp_event_getdatum(ev);
+    printf("Finished appending ");
+    /*gdp_datum_print(appended_datum,	// message to print
+					stdout,					// file to print it to
+					0);*/
+}
+
 // TODO: do_write should probably return an EP_STAT so we can error check
 static size_t
 do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
@@ -486,11 +516,27 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     if (!log_ent)
         goto fail1;
     if (gdpfs_log_ent_write(log_ent, &entry, sizeof(gdpfs_fmeta_t)) != 0)
+    {
+//        printf("FAILED on metadata write\n");
         goto fail0;
+    }
+/*    printf("After metadata write: length is %lu\n", gdp_datum_getdlen(log_ent->datum));
+    gdp_datum_print(log_ent->datum,	// message to print
+					stdout,					// file to print it to
+					0);*/
     if (gdpfs_log_ent_write(log_ent, buf, size) != 0)
+    {
+//        printf("FAILED on data write\n");
         goto fail0;
-
-    estat = gdpfs_log_append(file->log_handle, log_ent);
+    }
+    /*printf("After data write: length is %lu\n", gdp_datum_getdlen(log_ent->datum));
+    gdp_datum_print(log_ent->datum,	// message to print
+					stdout,					// file to print it to
+					0);
+*/
+    printf("NO FAIL\n");
+    _file_ref(file);
+    estat = gdpfs_log_append(file->log_handle, log_ent, free_fileref, file);
     if (EP_STAT_ISOK(estat))
     {
         written = size;
@@ -503,7 +549,7 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
 
 fail0:
     // remember to free our resources
-    gdpfs_log_ent_close(log_ent);
+    //gdpfs_log_ent_close(log_ent);
 fail1:
     return written;
 }
