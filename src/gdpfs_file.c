@@ -799,6 +799,10 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
             return false;
         }
     }
+    else
+    {
+        printf("Cache miss\n");
+    }
     
     return hit;
 

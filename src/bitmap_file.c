@@ -96,6 +96,7 @@ bool bitmap_file_set_range(int fd, off_t left, off_t right)
             rv = write(fd, chunk, BMP_CHUNKSIZE);
             if (rv != BMP_CHUNKSIZE)
                 return false;
+            bytesleft -= BMP_CHUNKSIZE;
         }
         // the final chunk
         rv = write(fd, chunk, bytesleft - 1);
@@ -171,6 +172,7 @@ bool bitmap_file_isset(int fd, off_t left, off_t right)
                 if (chunk[i] != 0xFF)
                     return false;
             }
+            bytesleft -= BMP_CHUNKSIZE;
         }
         // the final chunk
         rv = read(fd, chunk, bytesleft);
