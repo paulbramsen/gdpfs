@@ -658,11 +658,12 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
 
     if (overwrite)
     {
-        if (lseek(file->cache_fd, SEEK_SET, offset) < 0)
+        if (lseek(file->cache_fd, offset, SEEK_SET) < 0)
             goto fail0;
         if (write(file->cache_fd, buffer, size) != size)
             goto fail0;
-        bitmap_file_set_range(file->cache_bitmap_fd, offset, offset + size);
+        if (size != 0)
+            bitmap_file_set_range(file->cache_bitmap_fd, offset, offset + size);
     }
     else
     {
@@ -691,16 +692,23 @@ fail0:
 static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         off_t offset)
 {
+    /*
     off_t byte;
     bitmap_t *bitmap;
+    */
 
     if (!use_cache)
     {
-        ep_app_error("Illegal call to gdpfs_file_fill_cache with cache disabled.");
+        ep_app_error("Illegal call to gdpfs_file_get_cache with cache disabled.");
         return false;
     }
+    
+    if (size == 0)
+        return true;
 
-    bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);
+    return bitmap_file_isset(file->cache_bitmap_fd, offset, offset + size);
+
+    /*bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);
     for (byte = 0; byte < size; byte++)
     {
         if (!bitmap_is_set(bitmap, byte))
@@ -715,5 +723,6 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
 
 fail0:
     return false;
+    */
 }
 
