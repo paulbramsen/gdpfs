@@ -225,25 +225,15 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
             sprintf(cache_bitmap_name, "%s%s%s%s", CACHE_DIR, "/",
                     printable, BITMAP_EXTENSION);
 
-            // Check for existence of cache files. If they're there then we open them
-            // and put them in the file struct otherwise create the corresponding files
-            // TODO: consolidate this, eliminate reace conditions
-            if (access(cache_name, F_OK) != -1)
+            // Open the cache files and put them in the file struct
+            if ((file->cache_fd = open(cache_name, O_RDWR | O_CREAT, 0744)) == -1)
+                goto fail0;
+            if ((file->cache_bitmap_fd = open(cache_name, O_RDWR | O_CREAT, 0744)) == -1)
             {
-                file->cache_fd = open(cache_name, O_RDWR);
+                close(file->cache_fd);
+                goto fail0;
             }
-            else
-            {
-                file->cache_fd = open(cache_name, O_RDWR | O_CREAT | O_TRUNC, 0744);
-            }
-            if (access(cache_bitmap_name, F_OK) != -1)
-            {
-                file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR);
-            }
-            else
-            {
-                file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR | O_CREAT | O_TRUNC, 0744);
-            }
+
             ep_mem_free(cache_name);
             ep_mem_free(cache_bitmap_name);
         }
