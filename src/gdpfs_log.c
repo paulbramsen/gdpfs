@@ -154,16 +154,7 @@ EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent, gdpfs_callba
         ep_app_error("Cannot append to log in RO mode");
         return GDPFS_STAT_BADLOGMODE;
     }
-    /*printf("Appending ");
-    gdp_datum_print(ent->datum,	// message to print
-					stdout,					// file to print it to
-					0);*/
     estat = gdp_gcl_append_async(handle->gcl_handle, ent->datum, cb, udata);
-    //estat = gdp_gcl_append(handle->gcl_handle, ent->datum);
-    /*printf("Appended ");
-    gdp_datum_print(ent->datum,	// message to print
-					stdout,					// file to print it to
-					0);*/
     if (!EP_STAT_ISOK(estat))
     {
         char sbuf[100];

@@ -399,6 +399,11 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
         }
         goto fail0;
     }
+    
+    printf("Read ");
+    gdp_datum_print(log_ent->datum,	// message to print
+					stdout,					// file to print it to
+					0);
     data_size = gdpfs_log_ent_length(log_ent);
     if (gdpfs_log_ent_read(log_ent, &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
         || data_size != sizeof(gdpfs_fmeta_t) + entry.ent_size)
@@ -451,10 +456,26 @@ static size_t
 do_read(uint64_t fh, char *buf, size_t size, off_t offset)
 {
     gdpfs_file_t *file;
+    gdpfs_file_info_t *info;
+    EP_STAT estat;
 
     file = lookup_fh(fh);
     if (file == NULL)
         return 0;
+        
+    estat = _file_get_info_raw(&info, file);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Could not get file info during read: %d", EP_STAT_DETAIL(estat));
+        return 0;
+    }
+    
+    if (size + offset > info->file_size)
+    {
+        if (offset > info->file_size)
+            return 0;
+        size = info->file_size - offset;
+    }
 
     // check cache
     if (use_cache && gdpfs_file_get_cache(file, buf, size, offset))
@@ -477,12 +498,12 @@ static void free_fileref(gdp_event_t* ev)
     //gdpfs_file_t* file = gdp_event_getudata(ev);
     estat = gdp_event_getstat(ev);
     if (!EP_STAT_ISOK(estat))
-        ep_app_error("Coult not properly append: %d", EP_STAT_DETAIL(estat));
+        ep_app_error("Could not properly append: %d", EP_STAT_DETAIL(estat));
     //estat = _file_unref(file);
     //if (!EP_STAT_ISOK(estat))
     //    ep_app_error("Could not unreference file at %p", file);
 //    gdp_datum_t* appended_datum = gdp_event_getdatum(ev);
-    printf("Finished appending ");
+    //printf("Finished appending\n");
     /*gdp_datum_print(appended_datum,	// message to print
 					stdout,					// file to print it to
 					0);*/
@@ -517,39 +538,30 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
         goto fail1;
     if (gdpfs_log_ent_write(log_ent, &entry, sizeof(gdpfs_fmeta_t)) != 0)
     {
-//        printf("FAILED on metadata write\n");
+        ep_app_error("Failed on metadata write to log entry");
         goto fail0;
     }
-/*    printf("After metadata write: length is %lu\n", gdp_datum_getdlen(log_ent->datum));
-    gdp_datum_print(log_ent->datum,	// message to print
-					stdout,					// file to print it to
-					0);*/
     if (gdpfs_log_ent_write(log_ent, buf, size) != 0)
     {
-//        printf("FAILED on data write\n");
+        ep_app_error("Failed on data write to log entry");
         goto fail0;
     }
-    /*printf("After data write: length is %lu\n", gdp_datum_getdlen(log_ent->datum));
-    gdp_datum_print(log_ent->datum,	// message to print
-					stdout,					// file to print it to
-					0);
-*/
-    printf("NO FAIL\n");
+
     _file_ref(file);
+    // Write to cache. true is for overwriting cache
+    if (use_cache)
+    {
+        gdpfs_file_fill_cache(file, buf, size, offset, true);
+    }
     estat = gdpfs_log_append(file->log_handle, log_ent, free_fileref, file);
     if (EP_STAT_ISOK(estat))
     {
         written = size;
-
-
-        // Write to cache. true is for overwriting cache
-        if (use_cache)
-            gdpfs_file_fill_cache(file, buf, size, offset, true);
     }
 
 fail0:
-    // remember to free our resources
-    //gdpfs_log_ent_close(log_ent);
+    // remember to free our resources (asynchronously)
+    //TODO gdpfs_log_ent_close(log_ent);
 fail1:
     return written;
 }
@@ -647,21 +659,12 @@ static EP_STAT
 _file_load_info_cache(gdpfs_file_t* file)
 {
     EP_STAT estat;
-//    gdpfs_file_t *file;
     gdpfs_fmeta_t curr_entry;
     gdpfs_log_ent_t *log_ent;
     gdpfs_file_info_t *info = &file->info_cache;
     size_t read;
 
     memset(info, 0, sizeof(gdpfs_file_info_t));
-/*
-    file = lookup_fh(fh);
-    if (file == NULL)
-    {
-        estat = GDPFS_STAT_BADFH;
-        goto fail0;
-    }
-*/
     estat = gdpfs_log_ent_open(file->log_handle, &log_ent, -1);
     if (EP_STAT_IS_SAME(estat, GDPFS_STAT_NOTFOUND))
     {
@@ -773,10 +776,7 @@ fail0:
 static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         off_t offset)
 {
-    /*
-    off_t byte;
-    bitmap_t *bitmap;
-    */
+    ssize_t rv;
 
     if (!use_cache)
     {
@@ -787,7 +787,20 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
     if (size == 0)
         return true;
 
-    return bitmap_file_isset(file->cache_bitmap_fd, offset, offset + size);
+    bool hit = bitmap_file_isset(file->cache_bitmap_fd, offset, offset + size);
+    
+    if (hit)
+    {
+        lseek(file->cache_fd, offset, SEEK_SET);
+        rv = read(file->cache_fd, buffer, size);
+        if (rv != size)
+        {
+            ep_app_error("Cache is corrupt!\n");
+            return false;
+        }
+    }
+    
+    return hit;
 
     /*bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);
     for (byte = 0; byte < size; byte++)
