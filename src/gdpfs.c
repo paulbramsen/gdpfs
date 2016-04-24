@@ -29,6 +29,7 @@ struct gdpfs_entry
 typedef struct gdpfs_entry gdpfs_entry_t;
 
 static gdpfs_file_mode_t fs_mode;
+static bool use_cache;
 
 static inline gdpfs_file_perm_t gdpfs_extract_perm(mode_t mode)
 {
@@ -473,7 +474,7 @@ static struct fuse_operations gdpfs_oper = {
     .utimens        = gdpfs_utimens,
 };
 
-int gdpfs_run(char *root_log, bool ro, int fuse_argc, char *fuse_argv[])
+int gdpfs_run(char *root_log, bool ro, bool use_cache_, int fuse_argc, char *fuse_argv[])
 {
     EP_STAT estat;
     int ret;
@@ -482,6 +483,8 @@ int gdpfs_run(char *root_log, bool ro, int fuse_argc, char *fuse_argv[])
         fs_mode = GDPFS_FILE_MODE_RO;
     else
         fs_mode = GDPFS_FILE_MODE_RW;
+
+    use_cache = use_cache_;
 
     // need to init file before dir
     estat = init_gdpfs_file(fs_mode);

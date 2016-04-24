@@ -59,6 +59,10 @@ gdpfs_log_ent_length(gdpfs_log_ent_t *ent);
 size_t
 gdpfs_log_ent_read(gdpfs_log_ent_t *ent, void *buf, size_t size);
 
+// same as read, but doesn't advance pointer
+size_t
+gdpfs_log_ent_peek(gdpfs_log_ent_t *ent, void *buf, size_t size);
+
 int
 gdpfs_log_ent_write(gdpfs_log_ent_t *ent, const void *buf, size_t size);
 

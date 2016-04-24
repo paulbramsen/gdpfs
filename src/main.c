@@ -17,11 +17,12 @@ static void
 usage(void)
 {
     fprintf(stderr,
-        "Usage: %s [-hr] logname servername -- [fuse args]\n"
+        "Usage: %s [-hrd] logname servername -- [fuse args]\n"
         "    logname: GDP address of filesystem root directory log\n"
         "    servername: GDP address of log daemon to create new logs on\n"
         "    -h display this usage message and exit\n"
-        "    -r mount the filesys in read only mode\n",
+        "    -r mount the filesys in read only mode\n"
+        "    -d disable the cache\n",
         ep_app_getprogname());
     exit(EX_USAGE);
 }
@@ -39,6 +40,7 @@ main(int argc, char *argv[])
     int opt;
     int fuseargc;
     bool read_only = false;
+    bool use_cache = true;
     bool show_usage = false;
     char *argv0 = argv[0];
 
@@ -58,6 +60,10 @@ main(int argc, char *argv[])
 
         case 'r':
             read_only = true;
+            break;
+
+        case 'd':
+            use_cache = false;
             break;
 
         default:
@@ -89,5 +95,5 @@ main(int argc, char *argv[])
     argc++;
 
     signal(SIGINT, sig_int);
-    return gdpfs_run(gclpname, read_only, argc, argv);
+    return gdpfs_run(gclpname, read_only, use_cache, argc, argv);
 }
