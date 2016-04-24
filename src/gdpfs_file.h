@@ -87,9 +87,9 @@ EP_STAT
 gdpfs_file_set_perm(uint64_t fh, gdpfs_file_perm_t perm);
 
 EP_STAT
-gdpfs_file_set_info(uint64_t fh, gdpfs_file_info_t info);
+gdpfs_file_set_info(uint64_t fh, gdpfs_file_info_t *info);
 
 EP_STAT
-gdpfs_file_info(uint64_t fh, gdpfs_file_info_t *ret_stat);
+gdpfs_file_get_info(gdpfs_file_info_t **ret_stat, uint64_t fh);
 
 #endif // _GDPFS_FILE_H_

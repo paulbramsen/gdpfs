@@ -150,6 +150,11 @@ EP_STAT gdpfs_log_close(gdpfs_log_t *handle)
     return estat;
 }
 
+static void dummy_response(gdp_event_t* ev)
+{
+    printf("I got a response! User data is %p\n", gdp_event_getudata(ev));
+}
+
 EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent)
 {
     EP_STAT estat;
@@ -159,7 +164,8 @@ EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent)
         ep_app_error("Cannot append to log in RO mode");
         return GDPFS_STAT_BADLOGMODE;
     }
-    estat = gdp_gcl_append(handle->gcl_handle, ent->datum);
+    estat = gdp_gcl_append_async(handle->gcl_handle, ent->datum, dummy_response, NULL);
+    //estat = gdp_gcl_append(handle->gcl_handle, ent->datum);
     if (!EP_STAT_ISOK(estat))
     {
         char sbuf[100];

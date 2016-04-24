@@ -37,6 +37,8 @@ typedef struct
     uint32_t ref_count;
     int cache_fd;
     int cache_bitmap_fd;
+    bool info_cache_valid;
+    gdpfs_file_info_t info_cache;
 } gdpfs_file_t;
 
 typedef struct
@@ -65,7 +67,8 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
         off_t offset, bool overwrite);
 static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         off_t offset);
-
+static EP_STAT _file_load_info_cache(gdpfs_file_t* file);
+static EP_STAT _file_get_info_raw(gdpfs_file_info_t** info, gdpfs_file_t* file);
 
 EP_STAT
 init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
@@ -161,7 +164,6 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
 {
     EP_STAT estat;
     uint64_t fh;
-    gdpfs_file_info_t current_info;
     gdpfs_file_t *file = NULL;
     char *cache_name = NULL;
     char *cache_bitmap_name = NULL;
@@ -249,30 +251,32 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
     // check type and initialize if necessary
     if (type != GDPFS_FILE_TYPE_UNKNOWN)
     {
-        estat = gdpfs_file_info(fh, &current_info);
+        gdpfs_file_info_t* current_info = &file->info_cache;
+        estat = _file_get_info_raw(&current_info, file);
         if (!EP_STAT_ISOK(estat))
         {
-            ep_app_error("Failed to read current file info.");
-            *ret_stat = estat;
+            ep_app_error("Failed to load file info");
+            if (ret_stat)
+                *ret_stat = estat;
             goto fail2;
         }
         if (init)
         {
-            if (current_info.file_type == GDPFS_FILE_TYPE_NEW)
+            if (current_info->file_type == GDPFS_FILE_TYPE_NEW)
             {
-                current_info.file_size = 0;
-                current_info.file_type = type;
-                current_info.file_perm = perm;
-                do_write(fh, NULL, 0, 0, &current_info);
+                current_info->file_size = 0;
+                current_info->file_type = type;
+                current_info->file_perm = perm;
+                do_write(fh, NULL, 0, 0, current_info);
             }
-            else if (current_info.file_type == GDPFS_FILE_TYPE_UNKNOWN || strict_init)
+            else if (current_info->file_type == GDPFS_FILE_TYPE_UNKNOWN || strict_init)
             {
                 if (ret_stat)
                     *ret_stat = GDPFS_STAT_INVLDFTYPE;
                 goto fail2;
             }
         }
-        else if (current_info.file_type != type)
+        else if (current_info->file_type != type)
         {
             if (ret_stat)
                 *ret_stat = GDPFS_STAT_INVLDFTYPE;
@@ -298,9 +302,10 @@ fail0:
         ep_mem_free(file->hash_key);
         ep_mem_free(file);
     }
+fail1:
+    return -1;
 fail2:
     gdpfs_file_close(fh);
-fail1:
     return -1;
 }
 
@@ -508,18 +513,18 @@ gdpfs_file_write(uint64_t fh, const void *buf, size_t size, off_t offset)
 {
     EP_STAT estat;
     size_t potential_size;
-    gdpfs_file_info_t info;
+    gdpfs_file_info_t* info;
 
-    estat = gdpfs_file_info(fh, &info);
+    estat = gdpfs_file_get_info(&info, fh);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to read file size.");
         return 0;
     }
     potential_size = offset + size;
-    info.file_size = max(info.file_size, potential_size);
+    info->file_size = max(info->file_size, potential_size);
 
-    return do_write(fh, buf, size, offset, &info);
+    return do_write(fh, buf, size, offset, info);
 }
 
 // TODO return an EP_STAT
@@ -527,60 +532,90 @@ int
 gdpfs_file_ftruncate(uint64_t fh, size_t file_size)
 {
     EP_STAT estat;
-    gdpfs_file_info_t info;
+    gdpfs_file_info_t* info;
 
-    estat = gdpfs_file_info(fh, &info);
+    estat = gdpfs_file_get_info(&info, fh);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("failed to get file info");
         return 0;
     }
-    info.file_size = 0;
-    return do_write(fh, NULL, 0, 0, &info);
+    info->file_size = 0;
+    return do_write(fh, NULL, 0, 0, info);
 }
 
 EP_STAT
 gdpfs_file_set_perm(uint64_t fh, gdpfs_file_perm_t perm)
 {
     EP_STAT estat;
-    gdpfs_file_info_t info;
+    gdpfs_file_info_t* info;
 
-    estat = gdpfs_file_info(fh, &info);
+    estat = gdpfs_file_get_info(&info, fh);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("failed to get file info");
         return estat;
     }
-    info.file_perm = perm;
-    do_write(fh, NULL, 0, 0, &info);
+    info->file_perm = perm;
+    do_write(fh, NULL, 0, 0, info);
     return GDPFS_STAT_OK;
 }
 
 EP_STAT
-gdpfs_file_set_info(uint64_t fh, gdpfs_file_info_t info)
+gdpfs_file_set_info(uint64_t fh, gdpfs_file_info_t* info)
 {
-    do_write(fh, NULL, 0, 0, &info);
+    do_write(fh, NULL, 0, 0, info);
     return GDPFS_STAT_OK;
 }
 
 EP_STAT
-gdpfs_file_info(uint64_t fh, gdpfs_file_info_t* info)
+gdpfs_file_get_info(gdpfs_file_info_t** info, uint64_t fh)
+{
+    gdpfs_file_t* file = lookup_fh(fh);
+    if (file == NULL)
+        return GDPFS_STAT_BADFH;
+        
+    return _file_get_info_raw(info, file);
+}
+
+static EP_STAT
+_file_get_info_raw(gdpfs_file_info_t** info, gdpfs_file_t* file)
+{
+    if (!file->info_cache_valid)
+    {
+        EP_STAT estat = _file_load_info_cache(file);
+        if (!EP_STAT_ISOK(estat))
+        {
+            ep_app_error("Failed to load file info cache.");
+            return estat;
+        }
+        file->info_cache_valid = true;
+    }
+        
+    *info = &file->info_cache;
+    return GDPFS_STAT_OK;
+}
+
+
+static EP_STAT
+_file_load_info_cache(gdpfs_file_t* file)
 {
     EP_STAT estat;
-    gdpfs_file_t *file;
+//    gdpfs_file_t *file;
     gdpfs_fmeta_t curr_entry;
     gdpfs_log_ent_t *log_ent;
+    gdpfs_file_info_t *info = &file->info_cache;
     size_t read;
 
     memset(info, 0, sizeof(gdpfs_file_info_t));
-
+/*
     file = lookup_fh(fh);
     if (file == NULL)
     {
         estat = GDPFS_STAT_BADFH;
         goto fail0;
     }
-
+*/
     estat = gdpfs_log_ent_open(file->log_handle, &log_ent, -1);
     if (EP_STAT_IS_SAME(estat, GDPFS_STAT_NOTFOUND))
     {
@@ -658,11 +693,12 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
 
     if (overwrite)
     {
-        if (lseek(file->cache_fd, SEEK_SET, offset) < 0)
+        if (lseek(file->cache_fd, offset, SEEK_SET) < 0)
             goto fail0;
         if (write(file->cache_fd, buffer, size) != size)
             goto fail0;
-        bitmap_file_set_range(file->cache_bitmap_fd, offset, offset + size);
+        if (size != 0)
+            bitmap_file_set_range(file->cache_bitmap_fd, offset, offset + size);
     }
     else
     {
@@ -691,16 +727,23 @@ fail0:
 static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         off_t offset)
 {
+    /*
     off_t byte;
     bitmap_t *bitmap;
+    */
 
     if (!use_cache)
     {
-        ep_app_error("Illegal call to gdpfs_file_fill_cache with cache disabled.");
+        ep_app_error("Illegal call to gdpfs_file_get_cache with cache disabled.");
         return false;
     }
+    
+    if (size == 0)
+        return true;
 
-    bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);
+    return bitmap_file_isset(file->cache_bitmap_fd, offset, offset + size);
+
+    /*bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);
     for (byte = 0; byte < size; byte++)
     {
         if (!bitmap_is_set(bitmap, byte))
@@ -715,5 +758,6 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
 
 fail0:
     return false;
+    */
 }
 
