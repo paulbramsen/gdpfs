@@ -3,7 +3,7 @@ WALL=-Wall
 
 export C_INCLUDE_PATH=lib/
 
-DEBUG=-g -fvar-tracking -O0
+DEBUG=-g -fvar-tracking -O0 -lprofiler
 FUSE_LIBS=`pkg-config fuse --cflags --libs`
 CFLAGS=$(WALL) $(FUSE_LIBS) $(DEBUG)
 

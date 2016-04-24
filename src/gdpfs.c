@@ -16,6 +16,7 @@
 #include "gdpfs_file.h"
 #include "gdpfs_dir.h"
 #include "gdpfs_stat.h"
+#include <gperftools/profiler.h>
 
 struct gdpfs_entry
 {
@@ -29,6 +30,7 @@ struct gdpfs_entry
 typedef struct gdpfs_entry gdpfs_entry_t;
 
 static gdpfs_file_mode_t mode;
+static void exit_signal(int in);
 
 static int
 gdpfs_getattr(const char *path, struct stat *stbuf)
@@ -392,6 +394,13 @@ static struct fuse_operations gdpfs_oper = {
     .utimens        = gdpfs_utimens,
 };
 
+static void exit_signal(int in)
+{
+    printf("exited here\n");
+    ProfilerStop();
+    exit(0);
+}
+
 int gdpfs_run(char *root_log, bool ro, int fuse_argc, char *fuse_argv[])
 {
     EP_STAT estat;
@@ -410,6 +419,8 @@ int gdpfs_run(char *root_log, bool ro, int fuse_argc, char *fuse_argv[])
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
 
+    signal(SIGUSR1, exit_signal);
+    ProfilerStart("lol");
     // TODO: properly close resources after FUSE runs.
     ret = fuse_main(fuse_argc, fuse_argv, &gdpfs_oper, NULL);
     gdpfs_stop();
