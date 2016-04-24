@@ -228,7 +228,7 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
             // Open the cache files and put them in the file struct
             if ((file->cache_fd = open(cache_name, O_RDWR | O_CREAT, 0744)) == -1)
                 goto fail0;
-            if ((file->cache_bitmap_fd = open(cache_name, O_RDWR | O_CREAT, 0744)) == -1)
+            if ((file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR | O_CREAT, 0744)) == -1)
             {
                 close(file->cache_fd);
                 goto fail0;
