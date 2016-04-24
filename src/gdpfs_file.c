@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "gdpfs_file.h"
 #include "gdpfs_stat.h"
 #include "gdpfs.h"
@@ -29,6 +31,9 @@
 
 #define MAGIC_NUMBER 0xb531479b64f64e0d
 
+// Uncomment this if you want to use the bitmap for some reason
+//#define USE_BITMAP
+
 // TODO: file should store a copy of the meta data. This makes writes easier.
 typedef struct
 {
@@ -36,7 +41,9 @@ typedef struct
     char *hash_key;
     uint32_t ref_count;
     int cache_fd;
+#ifdef USE_BITMAP
     int cache_bitmap_fd;
+#endif
     bool info_cache_valid;
     gdpfs_file_info_t info_cache;
 } gdpfs_file_t;
@@ -232,12 +239,13 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
             // Open the cache files and put them in the file struct
             if ((file->cache_fd = open(cache_name, O_RDWR | O_CREAT, 0744)) == -1)
                 goto fail0;
+#ifdef USE_BITMAP
             if ((file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR | O_CREAT, 0744)) == -1)
             {
                 close(file->cache_fd);
                 goto fail0;
             }
-
+#endif
             ep_mem_free(cache_name);
             ep_mem_free(cache_bitmap_name);
         }
@@ -355,7 +363,9 @@ _file_unref(gdpfs_file_t* file)
         if (use_cache)
         {
             close(file->cache_fd);
+#ifdef USE_BITMAP
             close(file->cache_bitmap_fd);
+#endif
         }
         ep_mem_free(file->hash_key);
         ep_mem_free(file);
@@ -731,8 +741,6 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
         off_t offset, bool overwrite)
 {
     EP_STAT estat;
-    off_t byte;
-    bitmap_t *bitmap;
 
     if (!use_cache)
     {
@@ -746,11 +754,15 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
             goto fail0;
         if (write(file->cache_fd, buffer, size) != size)
             goto fail0;
+#ifdef USE_BITMAP
         if (size != 0)
             bitmap_file_set_range(file->cache_bitmap_fd, offset, offset + size);
+#endif
     }
     else
     {
+        ep_app_fatal("We haven't handled this case yet!");
+        /*
         bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);
         for (byte = 0; byte < size; byte++)
         {
@@ -764,6 +776,7 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
             }
         }
         bitmap_free(bitmap);
+        */
     }
     estat = GDPFS_STAT_OK;
     return estat;
@@ -777,6 +790,10 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         off_t offset)
 {
     ssize_t rv;
+    bool hit;
+#ifndef USE_BITMAP
+    off_t lrv;
+#endif
 
     if (!use_cache)
     {
@@ -787,7 +804,17 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
     if (size == 0)
         return true;
 
-    bool hit = bitmap_file_isset(file->cache_bitmap_fd, offset, offset + size);
+#ifndef USE_BITMAP        
+    lrv = lseek(file->cache_fd, offset, SEEK_HOLE);
+    if (lrv == (off_t) -1)
+        hit = false;
+        
+    hit = (lrv >= offset + size);
+#else
+
+    hit = bitmap_file_isset(file->cache_bitmap_fd, offset, offset + size);
+
+#endif
     
     if (hit)
     {
