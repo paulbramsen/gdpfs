@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <dirent.h>
 
+#include <ep/ep_thr.h>
 
 
 #define max(a,b) \
@@ -47,6 +48,8 @@ typedef struct
     bool new_file; // Used as an optimization: if this file is new, then the cache is fully up-to-date
     bool info_cache_valid;
     gdpfs_file_info_t info_cache;
+    
+    EP_THR_MUTEX ref_count_lock;
 } gdpfs_file_t;
 
 typedef struct
@@ -78,7 +81,7 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
 static EP_STAT _file_load_info_cache(gdpfs_file_t* file);
 static EP_STAT _file_get_info_raw(gdpfs_file_info_t** info, gdpfs_file_t* file);
 EP_STAT _file_unref(gdpfs_file_t* file);
-void _file_ref(gdpfs_file_t* file);
+EP_STAT _file_ref(gdpfs_file_t* file);
 
 EP_STAT
 init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
@@ -239,10 +242,16 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
 
             // Open the cache files and put them in the file struct
             if ((file->cache_fd = open(cache_name, O_RDWR | O_CREAT, 0744)) == -1)
+            {
+                if (ret_stat)
+                    *ret_stat = GDPFS_STAT_LOCAL_FS_FAIL;
                 goto fail0;
+            }
 #ifdef USE_BITMAP
             if ((file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR | O_CREAT, 0744)) == -1)
             {
+                if (ret_stat)
+                    *ret_stat = GDPFS_STAT_LOCAL_FS_FAIL;
                 close(file->cache_fd);
                 goto fail0;
             }
@@ -250,13 +259,25 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
             ep_mem_free(cache_name);
             ep_mem_free(cache_bitmap_name);
         }
+        
+        if (ep_thr_mutex_init(&file->ref_count_lock, EP_THR_MUTEX_NORMAL) != 0)
+        {
+            if (ret_stat)
+                *ret_stat = GDPFS_STAT_SYNCH_FAIL;
+            goto fail0;
+        }
 
         // add to hash table at very end to make handling failure cases easier
         ep_hash_insert(file_hash, sizeof(gdpfs_file_gname_t), log_name, file);
-
     }
-    _file_ref(file);
+    estat = _file_ref(file);
     files[fh] = file;
+    if (!EP_STAT_ISOK(estat))
+    {
+        if (ret_stat)
+            *ret_stat = estat;
+        goto fail2;
+    }
 
     if (strict_init)
     {
@@ -362,7 +383,15 @@ EP_STAT
 _file_unref(gdpfs_file_t* file)
 {
     EP_STAT estat;
-    if (--file->ref_count == 0)
+    uint32_t new_ref_count;
+    
+    if (ep_thr_mutex_lock(&file->ref_count_lock) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    new_ref_count = --file->ref_count;
+    if (ep_thr_mutex_unlock(&file->ref_count_lock) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    
+    if (new_ref_count == 0)
     {
         ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
         estat = gdpfs_log_close(file->log_handle);
@@ -374,6 +403,8 @@ _file_unref(gdpfs_file_t* file)
 #endif
         }
         ep_mem_free(file->hash_key);
+        if (ep_thr_mutex_destroy(&file->ref_count_lock) != 0)
+            estat = GDPFS_STAT_SYNCH_FAIL;
         ep_mem_free(file);
     }
     else
@@ -381,10 +412,15 @@ _file_unref(gdpfs_file_t* file)
     return estat;
 }
 
-void
+EP_STAT
 _file_ref(gdpfs_file_t* file)
 {
-    file->ref_count++;
+    if (ep_thr_mutex_lock(&file->ref_count_lock) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    ++file->ref_count;
+    if (ep_thr_mutex_unlock(&file->ref_count_lock) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    return EP_STAT_OK;
 }
 
 static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t size,
@@ -511,18 +547,13 @@ gdpfs_file_read(uint64_t fh, void *buf, size_t size, off_t offset)
 static void free_fileref(gdp_event_t* ev)
 {
     EP_STAT estat;
-    //gdpfs_file_t* file = gdp_event_getudata(ev);
+    gdpfs_file_t* file = gdp_event_getudata(ev);
     estat = gdp_event_getstat(ev);
     if (!EP_STAT_ISOK(estat))
         ep_app_error("Could not properly append: %d", EP_STAT_DETAIL(estat));
-    //estat = _file_unref(file);
-    //if (!EP_STAT_ISOK(estat))
-    //    ep_app_error("Could not unreference file at %p", file);
-//    gdp_datum_t* appended_datum = gdp_event_getdatum(ev);
-    //printf("Finished appending\n");
-    /*gdp_datum_print(appended_datum,	// message to print
-					stdout,					// file to print it to
-					0);*/
+    estat = _file_unref(file);
+    if (!EP_STAT_ISOK(estat))
+        ep_app_error("Could not unreference file at %p", file);
 }
 
 // TODO: do_write should probably return an EP_STAT so we can error check
@@ -563,7 +594,10 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
         goto fail0;
     }
 
-    _file_ref(file);
+    estat = _file_ref(file);
+    if (!EP_STAT_ISOK(estat))
+        goto fail0;
+        
     // Write to cache. true is for overwriting cache
     if (use_cache)
     {
@@ -576,8 +610,8 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     }
 
 fail0:
-    // remember to free our resources (asynchronously)
-    //TODO gdpfs_log_ent_close(log_ent);
+    // remember to free our resources
+    gdpfs_log_ent_close(log_ent);
 fail1:
     return written;
 }
