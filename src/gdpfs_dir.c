@@ -386,6 +386,7 @@ _add_at_offset(uint64_t fh, off_t offset, const char *name, gdpfs_file_gname_t g
     phys_ent.in_use = true;
     strncpy(phys_ent.name, name, NAME_MAX_GDPFS);
     phys_ent.name[NAME_MAX_GDPFS] = '\0';
+    printf("Writing dirent for %s\n", name);
     size = gdpfs_file_write(fh, &phys_ent, sizeof(gdpfs_dir_entry_phys_t), offset);
     if (size == 0)
     {

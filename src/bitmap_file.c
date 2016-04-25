@@ -43,6 +43,8 @@ bool bitmap_file_set_range(int fd, off_t left, off_t right)
         return false;
     }
     
+    /* It's slightly more efficient this way; we treat the range as inclusive at this point,
+       and have to consider one fewer byte if it's actually byte-aligned. */
     right -= 1;
     /* Check the first byte. */
     off_t leftbyte = left >> 3;
@@ -62,14 +64,16 @@ bool bitmap_file_set_range(int fd, off_t left, off_t right)
     ssize_t rv;
     
     uint8_t leftmask = ((uint8_t) 0xFF) >> leftbits;
-    uint8_t rightmask = ((uint8_t) 0xFF) << (8 - rightbits);
+    uint8_t rightmask = ((uint8_t) 0xFF) << (7 - rightbits);
     
     off_t bytesleft;
     
     /* Read the first byte. */
     rv = read(fd, chunk, 1);
-    if (rv != 1)
-        return false;
+    if (rv == 0)
+        chunk[0] = 0x00;
+    else
+        lseek(fd, -1, SEEK_CUR);
     
     if (leftbyte == rightbyte)
     {
@@ -92,14 +96,17 @@ bool bitmap_file_set_range(int fd, off_t left, off_t right)
             rv = write(fd, chunk, BMP_CHUNKSIZE);
             if (rv != BMP_CHUNKSIZE)
                 return false;
+            bytesleft -= BMP_CHUNKSIZE;
         }
         // the final chunk
         rv = write(fd, chunk, bytesleft - 1);
         if (rv != bytesleft - 1)
             return false;
         rv = read(fd, chunk, 1);
-        if (rv != 1)
-            return false;
+        if (rv == 0)
+            chunk[0] = 0x00;
+        else
+            lseek(fd, -1, SEEK_CUR);
         chunk[0] = chunk[0] | rightmask;
         rv = write(fd, chunk, 1);
         return rv == 1;
@@ -114,6 +121,8 @@ bool bitmap_file_isset(int fd, off_t left, off_t right)
         return false;
     }
     
+    /* It's slightly more efficient this way; we treat the range as inclusive at this point,
+       and have to consider one fewer byte if it's actually byte-aligned. */
     right -= 1;
     /* Check the first byte. */
     off_t leftbyte = left >> 3;
@@ -133,7 +142,7 @@ bool bitmap_file_isset(int fd, off_t left, off_t right)
     ssize_t rv;
     
     uint8_t leftmask = ((uint8_t) 0xFF) >> leftbits;
-    uint8_t rightmask = ((uint8_t) 0xFF) << (8 - rightbits);
+    uint8_t rightmask = ((uint8_t) 0xFF) << (7 - rightbits);
     
     off_t bytesleft;
     int i;
@@ -163,6 +172,7 @@ bool bitmap_file_isset(int fd, off_t left, off_t right)
                 if (chunk[i] != 0xFF)
                     return false;
             }
+            bytesleft -= BMP_CHUNKSIZE;
         }
         // the final chunk
         rv = read(fd, chunk, bytesleft);

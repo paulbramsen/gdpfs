@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "gdpfs_file.h"
 #include "gdpfs_stat.h"
 #include "gdpfs.h"
@@ -16,6 +18,7 @@
 #include <errno.h>
 #include <dirent.h>
 
+#include <ep/ep_thr.h>
 
 
 #define max(a,b) \
@@ -29,6 +32,9 @@
 
 #define MAGIC_NUMBER 0xb531479b64f64e0d
 
+// Uncomment this if you want to use the bitmap for some reason
+//#define USE_BITMAP
+
 // TODO: file should store a copy of the meta data. This makes writes easier.
 typedef struct
 {
@@ -36,9 +42,14 @@ typedef struct
     char *hash_key;
     uint32_t ref_count;
     int cache_fd;
+#ifdef USE_BITMAP
     int cache_bitmap_fd;
+#endif
+    bool new_file; // Used as an optimization: if this file is new, then the cache is fully up-to-date
     bool info_cache_valid;
     gdpfs_file_info_t info_cache;
+    
+    EP_THR_MUTEX ref_count_lock;
 } gdpfs_file_t;
 
 typedef struct
@@ -69,6 +80,8 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         off_t offset);
 static EP_STAT _file_load_info_cache(gdpfs_file_t* file);
 static EP_STAT _file_get_info_raw(gdpfs_file_info_t** info, gdpfs_file_t* file);
+EP_STAT _file_unref(gdpfs_file_t* file);
+EP_STAT _file_ref(gdpfs_file_t* file);
 
 EP_STAT
 init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
@@ -229,29 +242,53 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
 
             // Open the cache files and put them in the file struct
             if ((file->cache_fd = open(cache_name, O_RDWR | O_CREAT, 0744)) == -1)
+            {
+                if (ret_stat)
+                    *ret_stat = GDPFS_STAT_LOCAL_FS_FAIL;
                 goto fail0;
+            }
+#ifdef USE_BITMAP
             if ((file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR | O_CREAT, 0744)) == -1)
             {
+                if (ret_stat)
+                    *ret_stat = GDPFS_STAT_LOCAL_FS_FAIL;
                 close(file->cache_fd);
                 goto fail0;
             }
-
+#endif
             ep_mem_free(cache_name);
             ep_mem_free(cache_bitmap_name);
+        }
+        
+        if (ep_thr_mutex_init(&file->ref_count_lock, EP_THR_MUTEX_NORMAL) != 0)
+        {
+            if (ret_stat)
+                *ret_stat = GDPFS_STAT_SYNCH_FAIL;
+            goto fail0;
         }
 
         // add to hash table at very end to make handling failure cases easier
         ep_hash_insert(file_hash, sizeof(gdpfs_file_gname_t), log_name, file);
-
     }
-    file->ref_count++;
+    estat = _file_ref(file);
     files[fh] = file;
+    if (!EP_STAT_ISOK(estat))
+    {
+        if (ret_stat)
+            *ret_stat = estat;
+        goto fail2;
+    }
 
+    if (strict_init)
+    {
+        // This is guaranteed to be a new file
+        file->new_file = true;
+    }
 
     // check type and initialize if necessary
     if (type != GDPFS_FILE_TYPE_UNKNOWN)
     {
-        gdpfs_file_info_t* current_info = &file->info_cache;
+        gdpfs_file_info_t* current_info;
         estat = _file_get_info_raw(&current_info, file);
         if (!EP_STAT_ISOK(estat))
         {
@@ -332,7 +369,6 @@ gdpfs_file_open_init(EP_STAT *ret_stat, gdpfs_file_gname_t name,
 EP_STAT
 gdpfs_file_close(uint64_t fh)
 {
-    EP_STAT estat;
     gdpfs_file_t *file;
 
     file = lookup_fh(fh);
@@ -340,22 +376,51 @@ gdpfs_file_close(uint64_t fh)
         return GDPFS_STAT_BADFH;
     bitmap_release(fhs, fh);
 
+    return _file_unref(file);
+}
 
-    if (--file->ref_count == 0)
+EP_STAT
+_file_unref(gdpfs_file_t* file)
+{
+    EP_STAT estat;
+    uint32_t new_ref_count;
+    
+    if (ep_thr_mutex_lock(&file->ref_count_lock) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    new_ref_count = --file->ref_count;
+    if (ep_thr_mutex_unlock(&file->ref_count_lock) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    
+    if (new_ref_count == 0)
     {
         ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
         estat = gdpfs_log_close(file->log_handle);
         if (use_cache)
         {
             close(file->cache_fd);
+#ifdef USE_BITMAP
             close(file->cache_bitmap_fd);
+#endif
         }
         ep_mem_free(file->hash_key);
+        if (ep_thr_mutex_destroy(&file->ref_count_lock) != 0)
+            estat = GDPFS_STAT_SYNCH_FAIL;
         ep_mem_free(file);
     }
     else
         estat = GDPFS_STAT_OK;
     return estat;
+}
+
+EP_STAT
+_file_ref(gdpfs_file_t* file)
+{
+    if (ep_thr_mutex_lock(&file->ref_count_lock) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    ++file->ref_count;
+    if (ep_thr_mutex_unlock(&file->ref_count_lock) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    return EP_STAT_OK;
 }
 
 static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t size,
@@ -386,11 +451,16 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
         }
         goto fail0;
     }
+    
+    printf("Read ");
+    gdp_datum_print(log_ent->datum,	// message to print
+					stdout,					// file to print it to
+					0);
     data_size = gdpfs_log_ent_length(log_ent);
     if (gdpfs_log_ent_read(log_ent, &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
         || data_size != sizeof(gdpfs_fmeta_t) + entry.ent_size)
     {
-        ep_app_error("Corrupt log entry.");
+        ep_app_error("Corrupt log entry in file.");
         goto fail0;
     }
     // TODO: fill in cache on reads
@@ -438,10 +508,26 @@ static size_t
 do_read(uint64_t fh, char *buf, size_t size, off_t offset)
 {
     gdpfs_file_t *file;
+    gdpfs_file_info_t *info;
+    EP_STAT estat;
 
     file = lookup_fh(fh);
     if (file == NULL)
         return 0;
+        
+    estat = _file_get_info_raw(&info, file);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_error("Could not get file info during read: %d", EP_STAT_DETAIL(estat));
+        return 0;
+    }
+    
+    if (size + offset > info->file_size)
+    {
+        if (offset > info->file_size)
+            return 0;
+        size = info->file_size - offset;
+    }
 
     // check cache
     if (use_cache && gdpfs_file_get_cache(file, buf, size, offset))
@@ -456,6 +542,18 @@ size_t
 gdpfs_file_read(uint64_t fh, void *buf, size_t size, off_t offset)
 {
     return do_read(fh, buf, size, offset);
+}
+
+static void free_fileref(gdp_event_t* ev)
+{
+    EP_STAT estat;
+    gdpfs_file_t* file = gdp_event_getudata(ev);
+    estat = gdp_event_getstat(ev);
+    if (!EP_STAT_ISOK(estat))
+        ep_app_error("Could not properly append: %d", EP_STAT_DETAIL(estat));
+    estat = _file_unref(file);
+    if (!EP_STAT_ISOK(estat))
+        ep_app_error("Could not unreference file at %p", file);
 }
 
 // TODO: do_write should probably return an EP_STAT so we can error check
@@ -486,19 +584,29 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     if (!log_ent)
         goto fail1;
     if (gdpfs_log_ent_write(log_ent, &entry, sizeof(gdpfs_fmeta_t)) != 0)
+    {
+        ep_app_error("Failed on metadata write to log entry");
         goto fail0;
+    }
     if (gdpfs_log_ent_write(log_ent, buf, size) != 0)
+    {
+        ep_app_error("Failed on data write to log entry");
         goto fail0;
+    }
 
-    estat = gdpfs_log_append(file->log_handle, log_ent);
+    estat = _file_ref(file);
+    if (!EP_STAT_ISOK(estat))
+        goto fail0;
+        
+    // Write to cache. true is for overwriting cache
+    if (use_cache)
+    {
+        gdpfs_file_fill_cache(file, buf, size, offset, true);
+    }
+    estat = gdpfs_log_append(file->log_handle, log_ent, free_fileref, file);
     if (EP_STAT_ISOK(estat))
     {
         written = size;
-
-
-        // Write to cache. true is for overwriting cache
-        if (use_cache)
-            gdpfs_file_fill_cache(file, buf, size, offset, true);
     }
 
 fail0:
@@ -601,21 +709,12 @@ static EP_STAT
 _file_load_info_cache(gdpfs_file_t* file)
 {
     EP_STAT estat;
-//    gdpfs_file_t *file;
     gdpfs_fmeta_t curr_entry;
     gdpfs_log_ent_t *log_ent;
     gdpfs_file_info_t *info = &file->info_cache;
     size_t read;
 
     memset(info, 0, sizeof(gdpfs_file_info_t));
-/*
-    file = lookup_fh(fh);
-    if (file == NULL)
-    {
-        estat = GDPFS_STAT_BADFH;
-        goto fail0;
-    }
-*/
     estat = gdpfs_log_ent_open(file->log_handle, &log_ent, -1);
     if (EP_STAT_IS_SAME(estat, GDPFS_STAT_NOTFOUND))
     {
@@ -682,8 +781,6 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
         off_t offset, bool overwrite)
 {
     EP_STAT estat;
-    off_t byte;
-    bitmap_t *bitmap;
 
     if (!use_cache)
     {
@@ -697,11 +794,15 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
             goto fail0;
         if (write(file->cache_fd, buffer, size) != size)
             goto fail0;
+#ifdef USE_BITMAP
         if (size != 0)
             bitmap_file_set_range(file->cache_bitmap_fd, offset, offset + size);
+#endif
     }
     else
     {
+        ep_app_fatal("We haven't handled this case yet!");
+        /*
         bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);
         for (byte = 0; byte < size; byte++)
         {
@@ -715,6 +816,7 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
             }
         }
         bitmap_free(bitmap);
+        */
     }
     estat = GDPFS_STAT_OK;
     return estat;
@@ -727,10 +829,11 @@ fail0:
 static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         off_t offset)
 {
-    /*
-    off_t byte;
-    bitmap_t *bitmap;
-    */
+    ssize_t rv;
+    bool hit;
+#ifndef USE_BITMAP
+    off_t lrv;
+#endif
 
     if (!use_cache)
     {
@@ -738,10 +841,54 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         return false;
     }
     
+    /* Optimization: if the file was opened, then its cache is by definition up-to-date.
+     * Without this optimization, the client may query the GDP for things it doesn't have
+     * to. For example, suppose that the user writes at bytes 1000 to 1004 without writing
+     * any other bytes. 0 to 999 is a "hole" in the cache. Normally, the client will assume
+     * that this isn't cached, and will go to the log daemon to fetch this data. But if
+     * the client created the file, then they would have been informed via any subscriptions
+     * of updates to the file. So the cache will be up-to-date and the client can safely
+     * return zeros without querying the log daemon.
+     * Somehow, compilers actually perform this pattern of writes.
+     */
+    if (file->new_file)
+    {
+        hit = true;
+        goto check;
+    }
+    
     if (size == 0)
         return true;
 
-    return bitmap_file_isset(file->cache_bitmap_fd, offset, offset + size);
+#ifndef USE_BITMAP        
+    lrv = lseek(file->cache_fd, offset, SEEK_HOLE);
+    if (lrv == (off_t) -1)
+        hit = false;
+        
+    hit = (lrv >= offset + size);
+#else
+
+    hit = bitmap_file_isset(file->cache_bitmap_fd, offset, offset + size);
+
+#endif
+    
+check:
+    if (hit)
+    {
+        lseek(file->cache_fd, offset, SEEK_SET);
+        rv = read(file->cache_fd, buffer, size);
+        if (rv != size)
+        {
+            ep_app_error("Cache is corrupt!\n");
+            return false;
+        }
+    }
+    else
+    {
+        printf("Cache miss\n");
+    }
+    
+    return hit;
 
     /*bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);
     for (byte = 0; byte < size; byte++)
