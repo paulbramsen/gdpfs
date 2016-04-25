@@ -44,6 +44,7 @@ typedef struct
 #ifdef USE_BITMAP
     int cache_bitmap_fd;
 #endif
+    bool new_file; // Used as an optimization: if this file is new, then the cache is fully up-to-date
     bool info_cache_valid;
     gdpfs_file_info_t info_cache;
 } gdpfs_file_t;
@@ -257,6 +258,11 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
     _file_ref(file);
     files[fh] = file;
 
+    if (strict_init)
+    {
+        // This is guaranteed to be a new file
+        file->new_file = true;
+    }
 
     // check type and initialize if necessary
     if (type != GDPFS_FILE_TYPE_UNKNOWN)
@@ -801,6 +807,22 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         return false;
     }
     
+    /* Optimization: if the file was opened, then its cache is by definition up-to-date.
+     * Without this optimization, the client may query the GDP for things it doesn't have
+     * to. For example, suppose that the user writes at bytes 1000 to 1004 without writing
+     * any other bytes. 0 to 999 is a "hole" in the cache. Normally, the client will assume
+     * that this isn't cached, and will go to the log daemon to fetch this data. But if
+     * the client created the file, then they would have been informed via any subscriptions
+     * of updates to the file. So the cache will be up-to-date and the client can safely
+     * return zeros without querying the log daemon.
+     * Somehow, compilers actually perform this pattern of writes.
+     */
+    if (file->new_file)
+    {
+        hit = true;
+        goto check;
+    }
+    
     if (size == 0)
         return true;
 
@@ -816,6 +838,7 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
 
 #endif
     
+check:
     if (hit)
     {
         lseek(file->cache_fd, offset, SEEK_SET);
