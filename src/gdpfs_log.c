@@ -82,7 +82,7 @@ EP_STAT gdpfs_log_create(gdp_name_t log_iname)
     printf("File creation succeeded\n");
 
 
-    //estat = gdp_gcl_close(gcl);
+    estat = gdp_gcl_close(gcl);
     if (!EP_STAT_ISOK(estat))
     {
         char sbuf[100];

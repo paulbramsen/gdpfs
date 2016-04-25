@@ -261,7 +261,7 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
     // check type and initialize if necessary
     if (type != GDPFS_FILE_TYPE_UNKNOWN)
     {
-        gdpfs_file_info_t* current_info = &file->info_cache;
+        gdpfs_file_info_t* current_info;
         estat = _file_get_info_raw(&current_info, file);
         if (!EP_STAT_ISOK(estat))
         {
