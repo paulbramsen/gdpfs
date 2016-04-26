@@ -14,6 +14,7 @@
 
 #include "bitmap.h"
 #include "bitmap_file.h"
+#include "list.h"
 #include <assert.h>
 #include <errno.h>
 #include <dirent.h>
@@ -45,8 +46,10 @@ typedef struct
 #ifdef USE_BITMAP
     int cache_bitmap_fd;
 #endif
+	struct list_elem rc_elem; // for the recently closed cache
     bool new_file; // Used as an optimization: if this file is new, then the cache is fully up-to-date
     bool info_cache_valid;
+    bool recently_closed;
     gdpfs_file_info_t info_cache;
     
     EP_THR_MUTEX ref_count_lock;
@@ -63,12 +66,18 @@ typedef struct
 } gdpfs_fmeta_t;
 
 #define MAX_FHS 256
+#define RC_CAP 256
 const char * const CACHE_DIR = "/tmp/gdpfs-cache";
 const char * const BITMAP_EXTENSION = "-bitmap";
 static bitmap_t *fhs;
 static gdpfs_file_t **files;
 static EP_HASH *file_hash;
 static bool use_cache;
+
+
+static EP_THR_MUTEX rc_lock;
+static struct list recently_closed;
+static int recently_closed_size;
 
 // Private Functions
 static size_t do_write(uint64_t fh, const char *buf,
@@ -80,8 +89,10 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         off_t offset);
 static EP_STAT _file_load_info_cache(gdpfs_file_t* file);
 static EP_STAT _file_get_info_raw(gdpfs_file_info_t** info, gdpfs_file_t* file);
+EP_STAT _file_dealloc(gdpfs_file_t* file);
 EP_STAT _file_unref(gdpfs_file_t* file);
 EP_STAT _file_ref(gdpfs_file_t* file);
+EP_STAT _recently_closed_insert(gdpfs_file_t* file);
 
 EP_STAT
 init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
@@ -93,6 +104,13 @@ init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
     use_cache = _use_cache;
 
     estat = GDPFS_STAT_OOMEM;
+    
+    /* Initialize cache of recently closed files. */
+    list_init(&recently_closed);
+    recently_closed_size = 0;
+    if (ep_thr_mutex_init(&rc_lock, EP_THR_MUTEX_NORMAL) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    
     files = ep_mem_zalloc(sizeof(gdpfs_file_t *) * MAX_FHS);
     if (files == NULL)
         goto fail2;
@@ -143,6 +161,40 @@ stop_gdpfs_file()
     ep_hash_free(file_hash);
     bitmap_free(fhs);
     // TODO: close the logs
+}
+
+EP_STAT
+_recently_closed_insert(gdpfs_file_t* file)
+{
+    EP_STAT estat;
+    EP_ASSERT(!file->recently_closed);
+    file->recently_closed = true;
+    EP_ASSERT(ep_thr_mutex_lock(&rc_lock) == 0);
+    list_push_front(&recently_closed, &file->rc_elem);
+    EP_ASSERT(recently_closed_size <= RC_CAP && recently_closed_size >= 0);
+    if (recently_closed_size == RC_CAP)
+    {
+        gdpfs_file_t *oldfile = list_entry(list_pop_back(&recently_closed), gdpfs_file_t, rc_elem);
+        estat = _file_dealloc(oldfile);
+    }
+    else
+    {
+        recently_closed_size++;
+        estat = GDPFS_STAT_OK;
+    }
+    EP_ASSERT(ep_thr_mutex_unlock(&rc_lock) == 0);
+    return estat;
+}
+
+void
+_recently_closed_revive(gdpfs_file_t* file)
+{
+    EP_ASSERT(file->recently_closed);
+    file->recently_closed = false;
+    EP_ASSERT(ep_thr_mutex_lock(&rc_lock) == 0);
+    list_remove(&file->rc_elem);
+    recently_closed_size--;
+    EP_ASSERT(ep_thr_mutex_unlock(&rc_lock) == 0);
 }
 
 EP_STAT
@@ -270,6 +322,11 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
         // add to hash table at very end to make handling failure cases easier
         ep_hash_insert(file_hash, sizeof(gdpfs_file_gname_t), log_name, file);
     }
+    else if (file->recently_closed)
+    {
+        // Revive it from the recently closed cache if necessary
+        _recently_closed_revive(file);
+    }
     estat = _file_ref(file);
     files[fh] = file;
     if (!EP_STAT_ISOK(estat))
@@ -380,6 +437,25 @@ gdpfs_file_close(uint64_t fh)
 }
 
 EP_STAT
+_file_dealloc(gdpfs_file_t* file)
+{
+    EP_STAT estat;
+    ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
+    estat = gdpfs_log_close(file->log_handle);
+    if (use_cache)
+    {
+        close(file->cache_fd);
+#ifdef USE_BITMAP
+        close(file->cache_bitmap_fd);
+#endif
+    }
+    ep_mem_free(file->hash_key);
+    EP_ASSERT (ep_thr_mutex_destroy(&file->ref_count_lock) == 0);
+    ep_mem_free(file);
+    return estat;
+}
+
+EP_STAT
 _file_unref(gdpfs_file_t* file)
 {
     EP_STAT estat;
@@ -392,21 +468,7 @@ _file_unref(gdpfs_file_t* file)
         return GDPFS_STAT_SYNCH_FAIL;
     
     if (new_ref_count == 0)
-    {
-        ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
-        estat = gdpfs_log_close(file->log_handle);
-        if (use_cache)
-        {
-            close(file->cache_fd);
-#ifdef USE_BITMAP
-            close(file->cache_bitmap_fd);
-#endif
-        }
-        ep_mem_free(file->hash_key);
-        if (ep_thr_mutex_destroy(&file->ref_count_lock) != 0)
-            estat = GDPFS_STAT_SYNCH_FAIL;
-        ep_mem_free(file);
-    }
+        estat = _recently_closed_insert(file);
     else
         estat = GDPFS_STAT_OK;
     return estat;
