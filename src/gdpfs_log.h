@@ -4,6 +4,10 @@
 #include <ep/ep.h>
 #include <gdp/gdp.h>
 
+struct gdpfs_log_ent
+{
+    gdp_datum_t *datum;
+};
 typedef struct gdpfs_log gdpfs_log_t;
 typedef struct gdpfs_log_ent gdpfs_log_ent_t;
 typedef int64_t gdpfs_recno_t;
@@ -15,6 +19,7 @@ enum gdpfs_log_mode
 };
 typedef enum gdpfs_log_mode gdpfs_log_mode_t;
 typedef gdp_name_t gdpfs_log_gname_t;
+typedef gdp_event_cbfunc_t gdpfs_callback_t;
 
 /*
  * global init of log subsystem
@@ -35,7 +40,7 @@ EP_STAT
 gdpfs_log_close(gdpfs_log_t *handle);
 
 EP_STAT
-gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent);
+gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent, gdpfs_callback_t cb, void *data);
 
 void
 gdpfs_log_gname(gdpfs_log_t *handle, gdpfs_log_gname_t gname);
@@ -43,11 +48,11 @@ gdpfs_log_gname(gdpfs_log_t *handle, gdpfs_log_gname_t gname);
 /*
  * log ent management
  */
-gdpfs_log_ent_t *
-gdpfs_log_ent_new();
+EP_STAT
+gdpfs_log_ent_init(gdpfs_log_ent_t* log_ent);
 
 EP_STAT
-gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent,
+gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t *ent,
 		gdpfs_recno_t recno);
 
 void

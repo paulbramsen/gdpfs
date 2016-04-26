@@ -13,11 +13,6 @@ struct gdpfs_log
     gdpfs_log_gname_t gname;
 };
 
-struct gdpfs_log_ent
-{
-    gdp_datum_t *datum;
-};
-
 EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode)
 {
     EP_STAT estat;
@@ -72,7 +67,6 @@ EP_STAT gdpfs_log_create(gdp_name_t log_iname)
 
     // TODO create a keypair and use it for this log
 
-    printf("Creating file\n");
     estat = gdp_gcl_create(NULL, logd_iname, gmd, &gcl);
     if (!EP_STAT_ISOK(estat))
     {
@@ -84,10 +78,8 @@ EP_STAT gdpfs_log_create(gdp_name_t log_iname)
     gdp_gclmd_free(gmd);
     gcl_iname = gdp_gcl_getname(gcl);
     memcpy(log_iname, *gcl_iname, sizeof(gdp_name_t));
-    printf("File creation succeeded\n");
 
-
-    //estat = gdp_gcl_close(gcl);
+    estat = gdp_gcl_close(gcl);
     if (!EP_STAT_ISOK(estat))
     {
         char sbuf[100];
@@ -150,12 +142,7 @@ EP_STAT gdpfs_log_close(gdpfs_log_t *handle)
     return estat;
 }
 
-static void dummy_response(gdp_event_t* ev)
-{
-    printf("I got a response! User data is %p\n", gdp_event_getudata(ev));
-}
-
-EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent)
+EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent, gdpfs_callback_t cb, void *udata)
 {
     EP_STAT estat;
 
@@ -164,8 +151,7 @@ EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent)
         ep_app_error("Cannot append to log in RO mode");
         return GDPFS_STAT_BADLOGMODE;
     }
-    estat = gdp_gcl_append_async(handle->gcl_handle, ent->datum, dummy_response, NULL);
-    //estat = gdp_gcl_append(handle->gcl_handle, ent->datum);
+    estat = gdp_gcl_append_async(handle->gcl_handle, ent->datum, cb, udata);
     if (!EP_STAT_ISOK(estat))
     {
         char sbuf[100];
@@ -180,18 +166,15 @@ void gdpfs_log_gname(gdpfs_log_t *handle, gdpfs_log_gname_t gname)
      memcpy(gname, handle->gname, sizeof(gname) * sizeof(gname[0]));
 }
 
-gdpfs_log_ent_t *gdpfs_log_ent_new()
+EP_STAT
+gdpfs_log_ent_init(gdpfs_log_ent_t *log_ent)
 {
-    gdpfs_log_ent_t *log_ent;
-
-    log_ent = ep_mem_zalloc(sizeof(gdpfs_log_ent_t));
-    if (log_ent == NULL)
-        goto fail0;
     log_ent->datum = gdp_datum_new();
-    return log_ent;
-
-fail0:
-    return log_ent;
+    
+    if (log_ent->datum == NULL)
+        return GDPFS_STAT_OOMEM;
+    else
+        return GDPFS_STAT_OK;
 }
 
 /*
@@ -199,10 +182,9 @@ fail0:
  * NULL.
  */
 EP_STAT
-gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent, gdpfs_recno_t recno)
+gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t *ent, gdpfs_recno_t recno)
 {
     EP_STAT estat;
-    gdpfs_log_ent_t *log_ent;
 
 
     if (gcl_mode == GDP_MODE_AO)
@@ -210,15 +192,11 @@ gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent, gdpfs_recno_t rec
         ep_app_error("Cannot read log ent in AO mode");
         return GDPFS_STAT_BADLOGMODE;
     }
-    log_ent = gdpfs_log_ent_new();
-    *ent = log_ent;
-    if (log_ent == NULL)
-    {
-        estat = GDPFS_STAT_OOMEM;
-        goto fail0;
-    }
+    estat = gdpfs_log_ent_init(ent);
+    if (!EP_STAT_ISOK(estat))
+        return estat;
 
-    estat = gdp_gcl_read(handle->gcl_handle, recno, log_ent->datum);
+    estat = gdp_gcl_read(handle->gcl_handle, recno, ent->datum);
     if (!EP_STAT_ISOK(estat))
     {
         if (EP_STAT_DETAIL(estat) == _GDP_CCODE_NOTFOUND)
@@ -236,12 +214,7 @@ gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent, gdpfs_recno_t rec
     return estat;
 
 fail0:
-    if (log_ent)
-    {
-        gdp_datum_free(log_ent->datum);
-        ep_mem_free(log_ent);
-        *ent = NULL;
-    }
+    gdp_datum_free(ent->datum);
     return estat;
 }
 
@@ -250,12 +223,7 @@ fail0:
  */
 void gdpfs_log_ent_close(gdpfs_log_ent_t *ent)
 {
-    if (ent)
-    {
-        gdp_datum_free(ent->datum);
-        ep_mem_free(ent);
-    }
-
+    gdp_datum_free(ent->datum);
 }
 
 size_t gdpfs_log_ent_length(gdpfs_log_ent_t *ent)
