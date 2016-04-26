@@ -495,7 +495,7 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
     size_t left_read_size;
     size_t read_so_far;
     gdpfs_fmeta_t entry;
-    gdpfs_log_ent_t *log_ent;
+    gdpfs_log_ent_t log_ent;
 
     if (size == 0)
     {
@@ -515,11 +515,11 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
     }
     
     printf("Read ");
-    gdp_datum_print(log_ent->datum,	// message to print
+    gdp_datum_print(log_ent.datum,	// message to print
 					stdout,					// file to print it to
 					0);
-    data_size = gdpfs_log_ent_length(log_ent);
-    if (gdpfs_log_ent_read(log_ent, &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
+    data_size = gdpfs_log_ent_length(&log_ent);
+    if (gdpfs_log_ent_read(&log_ent, &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
         || data_size != sizeof(gdpfs_fmeta_t) + entry.ent_size)
     {
         ep_app_error("Corrupt log entry in file.");
@@ -542,9 +542,9 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
 
         // this log entry has data we want
         // TODO: error checking
-        gdpfs_log_ent_read(log_ent, NULL, read_start - entry.ent_offset);
-        gdpfs_log_ent_read(log_ent, buf + left_read_size, read_size);
-        gdpfs_log_ent_close(log_ent);
+        gdpfs_log_ent_read(&log_ent, NULL, read_start - entry.ent_offset);
+        gdpfs_log_ent_read(&log_ent, buf + left_read_size, read_size);
+        gdpfs_log_ent_close(&log_ent);
 
         // do left read
         do_read_starting_at_rec_no(file, buf, left_read_size, offset, rec_no - 1);
@@ -556,13 +556,13 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
     }
     else
     {
-        gdpfs_log_ent_close(log_ent);
+        gdpfs_log_ent_close(&log_ent);
         do_read_starting_at_rec_no(file, buf, size, offset, rec_no - 1);
     }
     return size;
 
 fail0:
-    gdpfs_log_ent_close(log_ent);
+    gdpfs_log_ent_close(&log_ent);
     return 0;
 }
 
@@ -626,7 +626,7 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     EP_STAT estat;
     gdpfs_file_t *file;
     size_t written = 0;
-    gdpfs_log_ent_t *log_ent;
+    gdpfs_log_ent_t log_ent;
     gdpfs_fmeta_t entry = {
         .file_size  = info->file_size,
         .file_type  = info->file_type,
@@ -642,15 +642,15 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     if (file == NULL)
         return 0;
 
-    log_ent = gdpfs_log_ent_new();
-    if (!log_ent)
+    estat = gdpfs_log_ent_init(&log_ent);
+    if (!EP_STAT_ISOK(estat))
         goto fail1;
-    if (gdpfs_log_ent_write(log_ent, &entry, sizeof(gdpfs_fmeta_t)) != 0)
+    if (gdpfs_log_ent_write(&log_ent, &entry, sizeof(gdpfs_fmeta_t)) != 0)
     {
         ep_app_error("Failed on metadata write to log entry");
         goto fail0;
     }
-    if (gdpfs_log_ent_write(log_ent, buf, size) != 0)
+    if (gdpfs_log_ent_write(&log_ent, buf, size) != 0)
     {
         ep_app_error("Failed on data write to log entry");
         goto fail0;
@@ -665,7 +665,7 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     {
         gdpfs_file_fill_cache(file, buf, size, offset, true);
     }
-    estat = gdpfs_log_append(file->log_handle, log_ent, free_fileref, file);
+    estat = gdpfs_log_append(file->log_handle, &log_ent, free_fileref, file);
     if (EP_STAT_ISOK(estat))
     {
         written = size;
@@ -673,7 +673,7 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
 
 fail0:
     // remember to free our resources
-    gdpfs_log_ent_close(log_ent);
+    gdpfs_log_ent_close(&log_ent);
 fail1:
     return written;
 }
@@ -772,7 +772,7 @@ _file_load_info_cache(gdpfs_file_t* file)
 {
     EP_STAT estat;
     gdpfs_fmeta_t curr_entry;
-    gdpfs_log_ent_t *log_ent;
+    gdpfs_log_ent_t log_ent;
     gdpfs_file_info_t *info = &file->info_cache;
     size_t read;
 
@@ -791,7 +791,7 @@ _file_load_info_cache(gdpfs_file_t* file)
     }
     else
     {
-        read = gdpfs_log_ent_read(log_ent, &curr_entry, sizeof(gdpfs_fmeta_t));
+        read = gdpfs_log_ent_read(&log_ent, &curr_entry, sizeof(gdpfs_fmeta_t));
         if (read != sizeof(gdpfs_fmeta_t))
         {
             estat = GDPFS_STAT_CORRUPT;
@@ -801,7 +801,7 @@ _file_load_info_cache(gdpfs_file_t* file)
         info->file_type = curr_entry.file_type;
         info->file_perm = curr_entry.file_perm;
         // remember to free our resources
-        gdpfs_log_ent_close(log_ent);
+        gdpfs_log_ent_close(&log_ent);
 
     }
     return GDPFS_STAT_OK;

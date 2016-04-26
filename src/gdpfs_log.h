@@ -48,11 +48,11 @@ gdpfs_log_gname(gdpfs_log_t *handle, gdpfs_log_gname_t gname);
 /*
  * log ent management
  */
-gdpfs_log_ent_t *
-gdpfs_log_ent_new();
+EP_STAT
+gdpfs_log_ent_init(gdpfs_log_ent_t* log_ent);
 
 EP_STAT
-gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent,
+gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t *ent,
 		gdpfs_recno_t recno);
 
 void

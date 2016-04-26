@@ -166,19 +166,15 @@ void gdpfs_log_gname(gdpfs_log_t *handle, gdpfs_log_gname_t gname)
      memcpy(gname, handle->gname, sizeof(gname) * sizeof(gname[0]));
 }
 
-gdpfs_log_ent_t *gdpfs_log_ent_new()
+EP_STAT
+gdpfs_log_ent_init(gdpfs_log_ent_t *log_ent)
 {
-    gdpfs_log_ent_t *log_ent;
-
-    log_ent = ep_mem_zalloc(sizeof(gdpfs_log_ent_t));
-    if (log_ent == NULL)
-        goto fail0;
     log_ent->datum = gdp_datum_new();
-    return log_ent;
-
-fail0:
-    printf("Memory allocation failed!\n");
-    return log_ent;
+    
+    if (log_ent->datum == NULL)
+        return GDPFS_STAT_OOMEM;
+    else
+        return GDPFS_STAT_OK;
 }
 
 /*
@@ -186,10 +182,9 @@ fail0:
  * NULL.
  */
 EP_STAT
-gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent, gdpfs_recno_t recno)
+gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t *ent, gdpfs_recno_t recno)
 {
     EP_STAT estat;
-    gdpfs_log_ent_t *log_ent;
 
 
     if (gcl_mode == GDP_MODE_AO)
@@ -197,15 +192,11 @@ gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent, gdpfs_recno_t rec
         ep_app_error("Cannot read log ent in AO mode");
         return GDPFS_STAT_BADLOGMODE;
     }
-    log_ent = gdpfs_log_ent_new();
-    *ent = log_ent;
-    if (log_ent == NULL)
-    {
-        estat = GDPFS_STAT_OOMEM;
-        goto fail0;
-    }
+    estat = gdpfs_log_ent_init(ent);
+    if (!EP_STAT_ISOK(estat))
+        return estat;
 
-    estat = gdp_gcl_read(handle->gcl_handle, recno, log_ent->datum);
+    estat = gdp_gcl_read(handle->gcl_handle, recno, ent->datum);
     if (!EP_STAT_ISOK(estat))
     {
         if (EP_STAT_DETAIL(estat) == _GDP_CCODE_NOTFOUND)
@@ -223,12 +214,7 @@ gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t **ent, gdpfs_recno_t rec
     return estat;
 
 fail0:
-    if (log_ent)
-    {
-        gdp_datum_free(log_ent->datum);
-        ep_mem_free(log_ent);
-        *ent = NULL;
-    }
+    gdp_datum_free(ent->datum);
     return estat;
 }
 
@@ -237,12 +223,7 @@ fail0:
  */
 void gdpfs_log_ent_close(gdpfs_log_ent_t *ent)
 {
-    if (ent)
-    {
-        gdp_datum_free(ent->datum);
-        ep_mem_free(ent);
-    }
-
+    gdp_datum_free(ent->datum);
 }
 
 size_t gdpfs_log_ent_length(gdpfs_log_ent_t *ent)
