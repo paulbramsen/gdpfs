@@ -572,6 +572,7 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
     gdpfs_file_t *file;
     gdpfs_file_info_t *info;
     EP_STAT estat;
+    size_t read_size;
 
     file = lookup_fh(fh);
     if (file == NULL)
@@ -597,7 +598,9 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
 
 
     memset(buf, 0, size);
-    return do_read_starting_at_rec_no(files[fh], buf, size, offset, -1);
+    read_size = do_read_starting_at_rec_no(files[fh], buf, size, offset, -1);
+    estat = gdpfs_file_fill_cache(files[fh], buf, read_size, offset, true);
+    return read_size;
 }
 
 size_t
