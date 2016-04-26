@@ -46,7 +46,7 @@ function timed() {
 }
 
 timed "cp -r $FILE ."
-timed "tar zxf $FILE"
+timed "tar zxf $DIR.tar.gz"
 cd $DIR
 timed "make"
 echo "TIME IS: $accum seconds"
