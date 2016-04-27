@@ -406,14 +406,14 @@ fail2:
 uint64_t
 gdpfs_file_open(EP_STAT *ret_stat, gdpfs_file_gname_t name)
 {
-    return open_file(ret_stat, name, GDPFS_FILE_TYPE_UNKNOWN, 0, false, true);
+    return open_file(ret_stat, name, GDPFS_FILE_TYPE_UNKNOWN, 0, false, false);
 }
 
 uint64_t
 gdpfs_file_open_type(EP_STAT *ret_stat, gdpfs_file_gname_t name,
         gdpfs_file_type_t type)
 {
-    return open_file(ret_stat, name, type, 0, false, true);
+    return open_file(ret_stat, name, type, 0, false, false);
 }
 
 uint64_t
@@ -929,8 +929,8 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
     lrv = lseek(file->cache_fd, offset, SEEK_HOLE);
     if (lrv == (off_t) -1)
         hit = false;
-        
-    hit = (lrv >= offset + size);
+    else
+        hit = (lrv >= offset + size);
 #else
 
     hit = bitmap_file_isset(file->cache_bitmap_fd, offset, offset + size);
