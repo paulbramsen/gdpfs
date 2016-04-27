@@ -406,14 +406,14 @@ fail2:
 uint64_t
 gdpfs_file_open(EP_STAT *ret_stat, gdpfs_file_gname_t name)
 {
-    return open_file(ret_stat, name, GDPFS_FILE_TYPE_UNKNOWN, 0, false, true);
+    return open_file(ret_stat, name, GDPFS_FILE_TYPE_UNKNOWN, 0, false, false);
 }
 
 uint64_t
 gdpfs_file_open_type(EP_STAT *ret_stat, gdpfs_file_gname_t name,
         gdpfs_file_type_t type)
 {
-    return open_file(ret_stat, name, type, 0, false, true);
+    return open_file(ret_stat, name, type, 0, false, false);
 }
 
 uint64_t
@@ -572,6 +572,7 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
     gdpfs_file_t *file;
     gdpfs_file_info_t *info;
     EP_STAT estat;
+    size_t read_size;
 
     file = lookup_fh(fh);
     if (file == NULL)
@@ -597,7 +598,9 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
 
 
     memset(buf, 0, size);
-    return do_read_starting_at_rec_no(files[fh], buf, size, offset, -1);
+    read_size = do_read_starting_at_rec_no(files[fh], buf, size, offset, -1);
+    estat = gdpfs_file_fill_cache(files[fh], buf, read_size, offset, true);
+    return read_size;
 }
 
 size_t
@@ -926,8 +929,8 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
     lrv = lseek(file->cache_fd, offset, SEEK_HOLE);
     if (lrv == (off_t) -1)
         hit = false;
-        
-    hit = (lrv >= offset + size);
+    else
+        hit = (lrv >= offset + size);
 #else
 
     hit = bitmap_file_isset(file->cache_bitmap_fd, offset, offset + size);
