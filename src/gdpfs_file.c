@@ -46,13 +46,14 @@ typedef struct
 #ifdef USE_BITMAP
     int cache_bitmap_fd;
 #endif
-	struct list_elem rc_elem; // for the recently closed cache
+    struct list_elem rc_elem; // for the recently closed cache
     bool new_file; // Used as an optimization: if this file is new, then the cache is fully up-to-date
     bool info_cache_valid;
     bool recently_closed;
     gdpfs_file_info_t info_cache;
     
     EP_THR_MUTEX ref_count_lock;
+    EP_THR_MUTEX cache_lock;
 } gdpfs_file_t;
 
 typedef struct
@@ -65,7 +66,7 @@ typedef struct
     uint64_t magic;
 } gdpfs_fmeta_t;
 
-#define MAX_FHS 256
+#define MAX_FHS 1024
 #define RC_CAP 256
 const char * const CACHE_DIR = "/tmp/gdpfs-cache";
 const char * const BITMAP_EXTENSION = "-bitmap";
@@ -76,6 +77,7 @@ static bool use_cache;
 
 
 static EP_THR_MUTEX rc_lock;
+static EP_THR_MUTEX open_lock;
 static struct list recently_closed;
 static int recently_closed_size;
 
@@ -109,6 +111,8 @@ init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
     list_init(&recently_closed);
     recently_closed_size = 0;
     if (ep_thr_mutex_init(&rc_lock, EP_THR_MUTEX_NORMAL) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    if (ep_thr_mutex_init(&open_lock, EP_THR_MUTEX_NORMAL) != 0)
         return GDPFS_STAT_SYNCH_FAIL;
     
     files = ep_mem_zalloc(sizeof(gdpfs_file_t *) * MAX_FHS);
@@ -204,7 +208,7 @@ gdpfs_file_create(uint64_t* fhp, gdpfs_file_gname_t log_iname,
     EP_STAT estat;
     uint64_t fh;
 
-    estat = gdpfs_log_create(log_iname);
+    estat = gdpfs_log_get_precreated(log_iname);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to create file");
@@ -241,6 +245,7 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
         goto fail1;
     }
 
+    ep_thr_mutex_lock(&open_lock);
     // check if the file is already open and in the hash
     file = ep_hash_search(file_hash, sizeof(gdpfs_file_gname_t), log_name);
 
@@ -318,6 +323,12 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
                 *ret_stat = GDPFS_STAT_SYNCH_FAIL;
             goto fail0;
         }
+        if (ep_thr_mutex_init(&file->cache_lock, EP_THR_MUTEX_NORMAL) != 0)
+        {
+            if (ret_stat)
+                *ret_stat = GDPFS_STAT_SYNCH_FAIL;
+            goto fail0;
+        }
 
         // add to hash table at very end to make handling failure cases easier
         ep_hash_insert(file_hash, sizeof(gdpfs_file_gname_t), log_name, file);
@@ -329,6 +340,7 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
     }
     estat = _file_ref(file);
     files[fh] = file;
+    ep_thr_mutex_unlock(&open_lock);
     if (!EP_STAT_ISOK(estat))
     {
         if (ret_stat)
@@ -385,6 +397,7 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
     return fh;
 
 fail0:
+    ep_thr_mutex_unlock(&open_lock);
     bitmap_release(fhs, fh);
     if (use_cache)
     {
@@ -853,6 +866,7 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
         return GDPFS_STAT_INVLDMODE;
     }
 
+    ep_thr_mutex_lock(&file->cache_lock);
     if (overwrite)
     {
         if (lseek(file->cache_fd, offset, SEEK_SET) < 0)
@@ -883,10 +897,12 @@ static EP_STAT gdpfs_file_fill_cache(gdpfs_file_t *file, const void *buffer, siz
         bitmap_free(bitmap);
         */
     }
+    ep_thr_mutex_unlock(&file->cache_lock);
     estat = GDPFS_STAT_OK;
     return estat;
 
 fail0:
+    ep_thr_mutex_unlock(&file->cache_lock);
     estat = GDPFS_STAT_OOMEM;
     return estat;
 }
@@ -926,6 +942,7 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         return true;
 
 #ifndef USE_BITMAP        
+    ep_thr_mutex_lock(&file->cache_lock);
     lrv = lseek(file->cache_fd, offset, SEEK_HOLE);
     if (lrv == (off_t) -1)
         hit = false;
@@ -945,6 +962,7 @@ check:
         if (rv != size)
         {
             ep_app_error("Cache is corrupt!\n");
+            ep_thr_mutex_unlock(&file->cache_lock);
             return false;
         }
     }
@@ -953,6 +971,7 @@ check:
         printf("Cache miss\n");
     }
     
+    ep_thr_mutex_unlock(&file->cache_lock);
     return hit;
 
     /*bitmap = bitmap_file_get_range(file->cache_bitmap_fd, offset, offset+size);

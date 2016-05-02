@@ -3,9 +3,25 @@
 #include "gdpfs_stat.h"
 #include <ep/ep_app.h>
 #include <string.h>
+#include <stdlib.h>
+#include <ep/ep_thr.h>
+#include <pthread.h>
+
+#define GDP_GCLMD_NONCE		0xA0A0A0A0	// CTM (creation time)
+#define PRECREATED_MAX          1024
 
 extern char* logd_xname;
 static gdp_iomode_t gcl_mode;
+static EP_THR_MUTEX creation_mutex;
+static gdp_name_t precreated_logs[PRECREATED_MAX];
+static size_t precreated_front;
+static size_t precreated_back;
+static EP_THR_MUTEX precreated_mutex;
+static EP_THR_COND precreated_cond;
+static pthread_t producer;
+
+static void *_producer_thread(void *arg);
+static EP_STAT _precreate_log(size_t index);
 
 struct gdpfs_log
 {
@@ -18,6 +34,19 @@ EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode)
     EP_STAT estat;
 
     estat = gdp_init(NULL);
+
+    precreated_front = 0;
+    precreated_back = 0;
+    if (ep_thr_mutex_init(&precreated_mutex, EP_THR_MUTEX_DEFAULT) != 0)
+        ep_app_error("Could not instantiate mutex for precreated\n");
+    if (ep_thr_cond_init(&precreated_cond) != 0)
+        ep_app_error("Could not instantiate cond for precreated\n");
+
+    // Create thread to do precreate threads. Currently our synchronization by design
+    // can only work for one of these producers.
+    pthread_create(&producer, NULL, _producer_thread, NULL);
+    
+    ep_thr_mutex_init(&creation_mutex, EP_THR_MUTEX_DEFAULT);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("GDP initialization failed");
@@ -35,16 +64,58 @@ EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode)
         gcl_mode = GDP_MODE_AO;
         break;
     default:
-        ep_app_error("uknown log mode");
+        ep_app_error("unknown log mode");
         return GDPFS_STAT_INVLDPARAM;
     }
     return GDPFS_STAT_OK;
 }
 
-EP_STAT gdpfs_log_create(gdp_name_t log_iname)
+static void * _producer_thread(void *arg)
+{
+    while (1)
+    {
+        ep_thr_mutex_lock(&precreated_mutex);
+        while (precreated_front == (precreated_back + 1) % PRECREATED_MAX)
+        {
+            ep_thr_cond_wait(&precreated_cond, &precreated_mutex, NULL);
+        }
+        ep_thr_mutex_unlock(&precreated_mutex);
+
+        _precreate_log(precreated_back);
+
+        ep_thr_mutex_lock(&precreated_mutex);
+        precreated_back = (precreated_back + 1) % PRECREATED_MAX;
+        if (precreated_back == (precreated_front + 1) % PRECREATED_MAX)
+            ep_thr_cond_broadcast(&precreated_cond);
+        ep_thr_mutex_unlock(&precreated_mutex);
+    }
+    // NOT REACHED
+    return NULL;
+}
+
+/**
+ * Will retrieve a log from the precreated queue.
+ */
+EP_STAT gdpfs_log_get_precreated(gdp_name_t log_iname)
+{
+    ep_thr_mutex_lock(&precreated_mutex);
+    while (precreated_front == precreated_back)
+    {
+        ep_thr_cond_wait(&precreated_cond, &precreated_mutex, NULL);
+    }
+    memcpy(log_iname, precreated_logs[precreated_front], sizeof(gdp_name_t));
+    precreated_front = (precreated_front + 1) % PRECREATED_MAX;
+    ep_thr_cond_signal(&precreated_cond);
+    ep_thr_mutex_unlock(&precreated_mutex);
+    return GDPFS_STAT_OK;
+}
+
+/*
+ * Adds new gdpfs log to this index.
+ */
+static EP_STAT _precreate_log(size_t index)
 {
     EP_STAT estat;
-
     // The internal name of the log server we're going to use
     gdp_name_t logd_iname;
 
@@ -65,9 +136,12 @@ EP_STAT gdpfs_log_create(gdp_name_t log_iname)
     ep_time_format(&tv, timestring, sizeof timestring, EP_TIME_FMT_DEFAULT);
     gdp_gclmd_add(gmd, GDP_GCLMD_CTIME, strlen(timestring), timestring);
 
+
     // TODO create a keypair and use it for this log
 
+    ep_thr_mutex_lock(&creation_mutex);
     estat = gdp_gcl_create(NULL, logd_iname, gmd, &gcl);
+    ep_thr_mutex_unlock(&creation_mutex);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Failed to create log.");
@@ -77,7 +151,7 @@ EP_STAT gdpfs_log_create(gdp_name_t log_iname)
     // TODO:Error checking here?
     gdp_gclmd_free(gmd);
     gcl_iname = gdp_gcl_getname(gcl);
-    memcpy(log_iname, *gcl_iname, sizeof(gdp_name_t));
+    memcpy(precreated_logs[index], *gcl_iname, sizeof(gdp_name_t));
 
     estat = gdp_gcl_close(gcl);
     if (!EP_STAT_ISOK(estat))
@@ -88,10 +162,12 @@ EP_STAT gdpfs_log_create(gdp_name_t log_iname)
             ep_stat_tostr(estat, sbuf, sizeof sbuf));
     }
 
+
     return GDPFS_STAT_OK;
 
 fail0:
     gdp_gclmd_free(gmd);
+    ep_thr_mutex_unlock(&creation_mutex);
     return GDPFS_STAT_CREATE_FAILED;
 }
 
