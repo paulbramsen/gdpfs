@@ -2,8 +2,10 @@
 #define _BITMAP_H_
 
 #include <ep/ep.h>
+#include <ep/ep_thr.h>
 
 typedef struct {
+    EP_THR_MUTEX mutex;
     size_t size;
     uint8_t data[0];
 } bitmap_t;

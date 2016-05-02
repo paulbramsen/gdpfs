@@ -31,7 +31,7 @@ init_gdpfs_log(gdpfs_log_mode_t log_mode);
  * log management
  */
 EP_STAT
-gdpfs_log_create(gdp_name_t log_iname);
+gdpfs_log_get_precreated(gdp_name_t log_iname);
 
 EP_STAT
 gdpfs_log_open(gdpfs_log_t **handle, gdp_name_t gcl_name);
