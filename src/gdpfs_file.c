@@ -237,7 +237,7 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
     fh = bitmap_reserve(fhs);
     if (fh == -1)
     {
-        estat = GDPFS_STAT_OOMEM;
+        *ret_stat = GDPFS_STAT_OOMEM;
         goto fail1;
     }
 

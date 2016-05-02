@@ -2,8 +2,10 @@
 #include "gdpfs_stat.h"
 
 #include <ep/ep_app.h>
+#include <ep/ep_assert.h>
 #include <libgen.h>
 #include <string.h>
+#include <assert.h>
 
 #define GDPFS_ROOT_DEFAULT_PERM (0551)
 
@@ -79,6 +81,7 @@ gdpfs_dir_open_file_at_path(EP_STAT *ret_stat, const char *path,
             *ret_stat = estat;
         return -1;
     }
+    EP_ASSERT(fh != (uint64_t) -1);
     curr_type = GDPFS_FILE_TYPE_DIR;
     while (path[0] != '\0')
     {
