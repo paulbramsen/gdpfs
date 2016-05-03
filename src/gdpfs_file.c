@@ -545,8 +545,26 @@ _file_dealloc(gdpfs_file_t* file)
     EP_STAT estat;
     void* chkpt;
     int len;
+    gdpfs_log_ent_t ent;
+    gdpfs_file_info_t* info;
+
+    estat = _file_get_info_raw(&info, file);
+    if (!EP_STAT_ISOK(estat))
+    {
+        ep_app_fatal("Failed to read file size.");
+    }
+    
+    gdpfs_fmeta_t entry = {
+        .file_size   = info->file_size,
+        .file_type   = info->file_type,
+        .file_perm   = info->file_perm,
+        .logent_type = GDPFS_LOGENT_TYPE_CHKPT,
+        .ent_offset  = -1,
+        .ent_size    = 0,
+        .magic       = MAGIC_NUMBER,
+    };
+    
     ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
-    estat = gdpfs_log_close(file->log_handle);
     if (use_cache)
     {
         close(file->cache_fd);
@@ -565,7 +583,18 @@ _file_dealloc(gdpfs_file_t* file)
     /* Now checkpoint the log. */
     // TODO figure out which nodes are dirty in the tree and push them to the log daemon with an asynchronous write
     get_dirty((struct ft_node**) &chkpt, &len, &file->figtree, file->last_recno + 1);
+    entry.ent_size = len;
+    gdpfs_log_ent_init(&ent);
+    gdpfs_log_ent_write(&ent, &entry, sizeof(gdpfs_fmeta_t));
+    gdpfs_log_ent_write(&ent, chkpt, len);
     ep_mem_free(chkpt);
+    
+    estat = gdpfs_log_append(file->log_handle, &ent, NULL, NULL);
+    EP_ASSERT (EP_STAT_ISOK(estat));
+    gdpfs_log_ent_close(&ent);
+    
+    estat = gdpfs_log_close(file->log_handle);
+    EP_ASSERT (EP_STAT_ISOK(estat));
     
     ft_dealloc(&file->figtree);
     

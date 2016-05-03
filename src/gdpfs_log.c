@@ -221,7 +221,11 @@ EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent, gdpfs_callba
         ep_app_error("Cannot append to log in RO mode");
         return GDPFS_STAT_BADLOGMODE;
     }
-    estat = gdp_gcl_append_async(handle->gcl_handle, ent->datum, cb, udata);
+    if (cb != NULL) {
+        estat = gdp_gcl_append_async(handle->gcl_handle, ent->datum, cb, udata);
+    } else {
+        estat = gdp_gcl_append(handle->gcl_handle, ent->datum);
+    }
     if (!EP_STAT_ISOK(estat))
     {
         char sbuf[100];
