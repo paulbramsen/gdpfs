@@ -29,7 +29,7 @@ void _ftn_subtrees_add(struct ft_node* this, int index, struct ft_node* new) {
            this->subtrees_len <= FT_SPLITLIMIT,
            "Bad index in _ftn_subtrees_add");
     memmove(&this->subtrees[index + 1], &this->subtrees[index],
-            (this->subtrees_len - index) * sizeof(struct ft_node*));
+            (this->subtrees_len - index) * sizeof(struct subtree_ptr));
     subtree_set(&this->subtrees[index], new);
     this->subtrees_len++;
 }
@@ -39,6 +39,7 @@ struct ft_node* ftn_new(int height, bool make_height) {
     ASSERT(height >= 0, "Negative height in ftn_new");
     this = mem_alloc(sizeof(struct ft_node));
     this->HEIGHT = height;
+    this->dirty = true;
 
     ftn_clear(this, make_height);
     
@@ -73,6 +74,7 @@ struct ft_node* ftn_insert(struct ft_node* this, struct ft_ent* newent,
     _ftn_entries_add(this, index, newent);
     subtree_set(&this->subtrees[index], leftChild);
     _ftn_subtrees_add(this, index + 1, rightChild);
+    this->dirty = true;
 
     if (this->entries_len == FT_SPLITLIMIT) {
         // Split the node and push the middle entry to parent
@@ -133,14 +135,14 @@ void ftn_replaceEntries(struct ft_node* this, int start, int end,
     memmove(&this->entries[start + 1], &this->entries[end],
             (this->entries_len - end) * sizeof(struct ft_ent));
     memmove(&this->subtrees[start + 1], &this->subtrees[end],
-            (this->subtrees_len - end) * sizeof(struct ft_node*));
+            (this->subtrees_len - end) * sizeof(struct subtree_ptr));
 
     this->entries_len -= (end - start - 1);
     this->subtrees_len -= (end - start - 1);
+    this->dirty = true;
 }
 
 void ftn_pruneTo(struct ft_node* this, struct interval* valid) {
-    struct ft_node* true_subtree;
     struct subtree_ptr* subtree;
     struct interval* entryint;
     
@@ -177,9 +179,7 @@ void ftn_pruneTo(struct ft_node* this, struct interval* valid) {
     }
 
     if (i_leftOverlaps(valid, entryint)) {
-        if ((true_subtree = subtree_get(subtree)) != NULL) {
-            ftn_clear(true_subtree, true);
-        }
+        subtree_clear(subtree, this->HEIGHT - 1);
 
         // In case the valid boundary is in the middle of this interval
         i_restrict_int(entryint, valid, false);
@@ -210,9 +210,7 @@ void ftn_pruneTo(struct ft_node* this, struct interval* valid) {
     subtree = &this->subtrees[i + 1];
 
     if (i_rightOverlaps(valid, entryint)) {
-        if ((true_subtree = subtree_get(subtree)) != NULL) {
-            ftn_clear(true_subtree, true);
-        }
+        subtree_clear(subtree, this->HEIGHT - 1);
 
         // In case the valid boundary is in the middle of this interval
         i_restrict_int(entryint, valid, false);
@@ -239,7 +237,9 @@ void ftn_pruneTo(struct ft_node* this, struct interval* valid) {
 
     performdeletes:
     for (i = 0, j = 0; i < this->entries_len; i++) {
-        if (!entrydel[i]) {
+        if (entrydel[i]) {
+            this->dirty = true;
+        } else {
             this->entries[j] = this->entries[i];
             j++;
         }

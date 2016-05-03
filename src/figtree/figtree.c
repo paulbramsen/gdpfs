@@ -29,7 +29,8 @@ struct insertcont {
 
 void _ft_insert(struct figtree* this, struct insertargs* args,
                 struct ft_node** path, int* pathIndices, int* path_len,
-                bool rightcontinuation, struct insertcont* ic) {
+                bool rightcontinuation, struct insertcont* ic,
+                gdpfs_log_t* log) {
     struct interval* range = &args->range;
     figtree_value_t value = args->value;
     struct ft_node* currnode = args->at;
@@ -69,7 +70,7 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
                     ic->hasleftc = true;
                     i_init(&ic->leftc.range, currival->left, range->left - 1);
                     ic->leftc.value = current->value;
-                    ic->leftc.at = subtree_get(&currnode->subtrees[i]);
+                    ic->leftc.at = subtree_get(&currnode->subtrees[i], log);
                     memcpy(&ic->leftc.valid, valid, sizeof(struct interval));
                     i_restrict_range(&ic->leftc.valid, i == 0 ? BYTE_INDEX_MIN :
                                      previval->right + 1,
@@ -103,7 +104,7 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
                     /* After we replace entries i ... j - 1 with the new
                      * entry, we need to continue with what is now subtree j.
                      */
-                    ic->rightc.at = subtree_get(&currnode->subtrees[j]);
+                    ic->rightc.at = subtree_get(&currnode->subtrees[j], log);
                     memcpy(&ic->rightc.valid, valid, sizeof(struct interval));
                     i_restrict_range(&ic->rightc.valid,
                                      previous->irange.right + 1,
@@ -132,7 +133,7 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
             } else if (i_rightOf_int(currival, range)) {
                 path[*path_len] = currnode;
                 pathIndices[(*path_len)++] = i;
-                currnode = subtree_get(&currnode->subtrees[i]);
+                currnode = subtree_get(&currnode->subtrees[i], log);
                 /* What if previval and currival are adjacent intervals? Then
                  * the entire subtree can be pruned. This is represented by the
                  * special empty interval.
@@ -144,7 +145,7 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
         }
         path[*path_len] = currnode;
         pathIndices[(*path_len)++] = numentries;
-        currnode = subtree_get(&currnode->subtrees[numentries]);
+        currnode = subtree_get(&currnode->subtrees[numentries], log);
         i_restrict_range(valid, currival == NULL ? BYTE_INDEX_MIN :
                          currival->right + 1, BYTE_INDEX_MAX, true);
     }
@@ -200,9 +201,9 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
                      * the path. We also need to adjust the index accordingly.
                      */
                     if (insertindex <= FT_ORDER) {
-                        path[pathindex] = subtree_get(&topushnode->subtrees[0]);
+                        path[pathindex] = subtree_get(&topushnode->subtrees[0], log);
                     } else {
-                        path[pathindex] = subtree_get(&topushnode->subtrees[1]);
+                        path[pathindex] = subtree_get(&topushnode->subtrees[1], log);
                         pathIndices[pathindex] =
                             (insertindex -= (FT_ORDER + 1));
                     }
@@ -223,8 +224,8 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
             }
             
             topushent = &topushnode->entries[0];
-            left = subtree_get(&topushnode->subtrees[0]);
-            right = subtree_get(&topushnode->subtrees[1]);
+            left = subtree_get(&topushnode->subtrees[0], log);
+            right = subtree_get(&topushnode->subtrees[1], log);
         }
 
         // No parent to push to
@@ -232,10 +233,10 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
         if (rightcontinuation) {
             struct ft_node* nextpathmember = path[0];
             memmove(&pathIndices[1], pathIndices, (*path_len) * sizeof(int));
-            if (nextpathmember == subtree_get(&topushnode->subtrees[1])) {
+            if (nextpathmember == subtree_get(&topushnode->subtrees[1], log)) {
                 pathIndices[0] = 1;
             } else {
-                ASSERT(nextpathmember == subtree_get(&topushnode->subtrees[0]),
+                ASSERT(nextpathmember == subtree_get(&topushnode->subtrees[0], log),
                        "First element of path is not a child of the new root");
                 pathIndices[0] = 0;
             }
@@ -252,7 +253,7 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
 }
 
 void ft_write(struct figtree* this, byte_index_t start, byte_index_t end,
-              figtree_value_t value) {
+              figtree_value_t value, gdpfs_log_t* log) {
     // Plus one because the height of the tree may increase on insert
     // Plus one because the height of a leaf is 0, not 1
     int maxdepth = this->root->HEIGHT + 2;
@@ -268,22 +269,22 @@ void ft_write(struct figtree* this, byte_index_t start, byte_index_t end,
     iargs.at = this->root;
     i_init(&iargs.valid, BYTE_INDEX_MIN, BYTE_INDEX_MAX);
     
-    _ft_insert(this, &iargs, path, pathIndices, &path_len, false, &starinserts);
+    _ft_insert(this, &iargs, path, pathIndices, &path_len, false, &starinserts, log);
     if (starinserts.hasrightc) {
         _ft_insert(this, &starinserts.rightc, path, pathIndices, &path_len,
-                   true, &newstarinserts);
+                   true, &newstarinserts, log);
         ASSERT(!newstarinserts.hasleftc && !newstarinserts.hasrightc,
                "Recursive star insert on right continutation");
     }
     if (starinserts.hasleftc) {
         _ft_insert(this, &starinserts.leftc, path, pathIndices, &path_len,
-                   false, &newstarinserts);
+                   false, &newstarinserts, log);
         ASSERT(!newstarinserts.hasleftc && !newstarinserts.hasrightc,
                "Recursive star insert on left continuation");
     }
 }
 
-figtree_value_t* ft_lookup(struct figtree* this, byte_index_t location) {
+figtree_value_t* ft_lookup(struct figtree* this, byte_index_t location, gdpfs_log_t* log) {
     struct ft_node* currnode = this->root;
 
     outerloop:
@@ -295,11 +296,11 @@ figtree_value_t* ft_lookup(struct figtree* this, byte_index_t location) {
             if (i_contains_val(currival, location)) {
                 return &current->value;
             } else if (currival->left > location) {
-                currnode = subtree_get(&currnode->subtrees[i]);
+                currnode = subtree_get(&currnode->subtrees[i], log);
                 goto outerloop;
             }
         }
-        currnode = subtree_get(&currnode->subtrees[currnode->entries_len]);
+        currnode = subtree_get(&currnode->subtrees[currnode->entries_len], log);
     }
 
     return NULL;
@@ -331,7 +332,8 @@ struct figtree_iter {
 
 /* Returns an iterator over the closed interval [START, END]. */
 struct figtree_iter* ft_read(struct figtree* this,
-                             byte_index_t start, byte_index_t end) {
+                             byte_index_t start, byte_index_t end,
+                             gdpfs_log_t* log) {
     struct interval initvalid;
     struct ft_ent* entry;
     struct figtree_iter* iterator =
@@ -361,7 +363,7 @@ struct figtree_iter* ft_read(struct figtree* this,
                 ors = rs;
                 rs = &iterstates[++iterator->depth];
                 ft_iterstate_init(rs,
-                                  subtree_get(&ors->node->subtrees[ors->pos]),
+                                  subtree_get(&ors->node->subtrees[ors->pos], log),
                                   &ors->valid);
                 i_restrict_range(&rs->valid, previval == NULL ?
                                  BYTE_INDEX_MIN : (previval->right + 1),
@@ -371,9 +373,10 @@ struct figtree_iter* ft_read(struct figtree* this,
         }
         ors = rs;
         rs = &iterstates[++iterator->depth];
-        ft_iterstate_init(rs, subtree_get(&ors->node->subtrees[ors->pos]),
+        ft_iterstate_init(rs, subtree_get(&ors->node->subtrees[ors->pos], log),
                           &ors->valid);
-        i_restrict_range(&rs->valid, currival->right + 1, BYTE_INDEX_MAX,
+        i_restrict_range(&rs->valid, currival == NULL ?
+                         BYTE_INDEX_MIN: (currival->right + 1), BYTE_INDEX_MAX,
                          false);
     }
     breakouterloop:
@@ -394,7 +397,7 @@ void ft_dealloc(struct figtree* this) {
 /* Populates NEXT with the next fig (i.e. the next range of bytes and the
  * value it corresponds to), or returns false if there is no next fig.
  */
-bool fti_next(struct figtree_iter* this, struct fig* next) {
+bool fti_next(struct figtree_iter* this, struct fig* next, gdpfs_log_t* log) {
     struct figtree_iterstate* states = (struct figtree_iterstate*) (this + 1);
     struct figtree_iterstate* rs;
     struct interval* oldvalid;
@@ -448,7 +451,7 @@ bool fti_next(struct figtree_iter* this, struct fig* next) {
          * why we have this if statement.
          */
         if (leftlimit <= rightlimit) {
-            subtree = subtree_get(&rs->node->subtrees[rs->pos]);
+            subtree = subtree_get(&rs->node->subtrees[rs->pos], log);
 
             /* This is the loop where we drill down the subtree. */
             while (subtree != NULL) {
@@ -491,7 +494,7 @@ bool fti_next(struct figtree_iter* this, struct fig* next) {
                     }
                     rightlimit = rs->node->entries[rs->pos].irange.left - 1;
                 }
-                subtree = subtree_get(&rs->node->subtrees[rs->pos]);
+                subtree = subtree_get(&rs->node->subtrees[rs->pos], log);
             }
         }
     }

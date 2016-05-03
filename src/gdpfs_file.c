@@ -53,6 +53,11 @@ typedef struct
     bool recently_closed;
     gdpfs_file_info_t info_cache;
     
+    gdpfs_recno_t last_recno;
+    int outstanding_reqs;
+    EP_THR_MUTEX outstanding_reqs_lock;
+    EP_THR_COND outstanding_reqs_cond;
+    
     figtree_t figtree;
     bool figtree_initialized;
     EP_THR_MUTEX ref_count_lock;
@@ -188,6 +193,7 @@ _recently_closed_insert(gdpfs_file_t* file)
     EP_STAT estat;
     EP_ASSERT(!file->recently_closed);
     file->recently_closed = true;
+    EP_ASSERT(ep_thr_mutex_lock(&open_lock) == 0);
     EP_ASSERT(ep_thr_mutex_lock(&rc_lock) == 0);
     list_push_front(&recently_closed, &file->rc_elem);
     EP_ASSERT(recently_closed_size <= RC_CAP && recently_closed_size >= 0);
@@ -201,6 +207,7 @@ _recently_closed_insert(gdpfs_file_t* file)
         recently_closed_size++;
         estat = GDPFS_STAT_OK;
     }
+    ep_thr_mutex_unlock(&open_lock);
     EP_ASSERT(ep_thr_mutex_unlock(&rc_lock) == 0);
     return estat;
 }
@@ -324,21 +331,17 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
             ep_mem_free(cache_bitmap_name);
         }
         
-        if (ep_thr_mutex_init(&file->ref_count_lock, EP_THR_MUTEX_NORMAL) != 0)
+        if (ep_thr_mutex_init(&file->ref_count_lock, EP_THR_MUTEX_NORMAL) != 0 ||
+            ep_thr_mutex_init(&file->cache_lock, EP_THR_MUTEX_NORMAL) != 0 ||
+            ep_thr_mutex_init(&file->figtree_lock, EP_THR_MUTEX_NORMAL) != 0 ||
+            ep_thr_mutex_init(&file->outstanding_reqs_lock, EP_THR_MUTEX_NORMAL) != 0 ||
+            ep_thr_cond_init(&file->outstanding_reqs_cond) != 0)
         {
             estat = GDPFS_STAT_SYNCH_FAIL;
             goto fail0;
         }
-        if (ep_thr_mutex_init(&file->cache_lock, EP_THR_MUTEX_NORMAL) != 0)
-        {
-            estat = GDPFS_STAT_SYNCH_FAIL;
-            goto fail0;
-        }
-        if (ep_thr_mutex_init(&file->figtree_lock, EP_THR_MUTEX_NORMAL) != 0)
-        {
-            estat = GDPFS_STAT_SYNCH_FAIL;
-            goto fail0;
-        }
+        
+        file->outstanding_reqs = 0;
 
         // add to hash table at very end to make handling failure cases easier
         ep_hash_insert(file_hash, sizeof(gdpfs_file_gname_t), log_name, file);
@@ -408,6 +411,7 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
         ents = ep_mem_zalloc(entslen * sizeof(gdpfs_log_ent_t));
         estat = gdpfs_log_ent_open(file->log_handle, &ents[0], -1);
         recno = gdpfs_log_ent_recno(&ents[0]);
+        file->last_recno = recno;
         gdpfs_log_ent_close(&ents[0]);
         if (EP_STAT_IS_SAME(estat, GDPFS_STAT_NOTFOUND))
         {
@@ -457,7 +461,7 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
             }
             if (entry.ent_size > 0) {
                 //printf("Writing [%lu, %lu]: %lu\n", entry.ent_offset, entry.ent_offset + entry.ent_size - 1, gdpfs_log_ent_recno(&ents[enti]));
-                ft_write(&file->figtree, entry.ent_offset, entry.ent_offset + entry.ent_size - 1, gdpfs_log_ent_recno(&ents[enti]));
+                ft_write(&file->figtree, entry.ent_offset, entry.ent_offset + entry.ent_size - 1, gdpfs_log_ent_recno(&ents[enti]), file->log_handle);
                 read = 0;
                 // while we're at it, populate the cache
                 while (read < entry.ent_size) {
@@ -542,9 +546,7 @@ gdpfs_file_close(uint64_t fh)
         return GDPFS_STAT_BADFH;
     bitmap_release(fhs, fh);
 
-    ep_thr_mutex_lock(&open_lock);
     estat = _file_unref(file);
-    ep_thr_mutex_unlock(&open_lock);
     return estat;
 }
 
@@ -562,7 +564,23 @@ _file_dealloc(gdpfs_file_t* file)
 #endif
     }
     ep_mem_free(file->hash_key);
+    
+    /* Wait until there are no more pending operations, then checkpoint the log. */
+    ep_thr_mutex_lock(&file->outstanding_reqs_lock);
+    while (file->outstanding_reqs > 0)
+        ep_thr_cond_wait(&file->outstanding_reqs_cond, &file->outstanding_reqs_lock, NULL);
+    ep_thr_mutex_unlock(&file->outstanding_reqs_lock);
+    
+    /* Now checkpoint the log. */
+    // TODO figure out which nodes are dirty in the tree and push them to the log daemon with an asynchronous write
+    
+    ft_dealloc(&file->figtree);
+    
     EP_ASSERT (ep_thr_mutex_destroy(&file->ref_count_lock) == 0);
+    EP_ASSERT (ep_thr_mutex_destroy(&file->cache_lock) == 0);
+    EP_ASSERT (ep_thr_mutex_destroy(&file->figtree_lock) == 0);
+    EP_ASSERT (ep_thr_mutex_destroy(&file->outstanding_reqs_lock) == 0);
+    EP_ASSERT (ep_thr_cond_destroy(&file->outstanding_reqs_cond) == 0);
     ep_mem_free(file);
     return estat;
 }
@@ -580,7 +598,9 @@ _file_unref(gdpfs_file_t* file)
         return GDPFS_STAT_SYNCH_FAIL;
     
     if (new_ref_count == 0)
+    {
         estat = _recently_closed_insert(file);
+    }
     else
         estat = GDPFS_STAT_OK;
     return estat;
@@ -597,6 +617,7 @@ _file_ref(gdpfs_file_t* file)
     return EP_STAT_OK;
 }
 
+/*
 static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t size,
         off_t offset, gdpfs_recno_t rec_no)
 {
@@ -676,6 +697,7 @@ fail0:
     gdpfs_log_ent_close(&log_ent);
     return 0;
 }
+*/
 
 void handle_read(gdp_event_t* ev)
 {
@@ -709,7 +731,6 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
     gdpfs_file_t *file;
     gdpfs_file_info_t *info;
     EP_STAT estat;
-    size_t read_size;
 
     file = lookup_fh(fh);
     if (file == NULL)
@@ -730,7 +751,7 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
     }
 
     // check cache
-    if (buf == NULL && use_cache) {
+    if (use_cache) {
         bool hit;
         ep_thr_mutex_lock(&file->cache_lock);
         hit = gdpfs_file_get_cache(file, buf, size, offset);
@@ -753,8 +774,8 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
         ep_thr_mutex_init(&lock, EP_THR_MUTEX_NORMAL);
         ep_thr_cond_init(&condvar);
         ep_thr_mutex_lock(&file->figtree_lock);
-        figterator = ft_read(&file->figtree, offset, offset + size - 1);
-        while (fti_next(figterator, &indexgroup)) {
+        figterator = ft_read(&file->figtree, offset, offset + size - 1, file->log_handle);
+        while (fti_next(figterator, &indexgroup, file->log_handle)) {
             if (indexgroup.value == 0) {
                 // We have to read from the cache here
                 EP_ASSERT(gdpfs_file_get_cache(file, buf + indexgroup.irange.left - offset, indexgroup.irange.right - indexgroup.irange.left + 1,
@@ -804,17 +825,14 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
         ep_thr_mutex_destroy(&lock);
         ep_thr_cond_destroy(&condvar);
         
+        ep_thr_mutex_lock(&file->cache_lock);
+        estat = gdpfs_file_fill_cache(files[fh], buf, size, offset, true);
+        ep_thr_mutex_unlock(&file->cache_lock);
+        
         return size;
     }
     
     return 0;
-    
-    
-    read_size = do_read_starting_at_rec_no(files[fh], buf, size, offset, -1);
-    ep_thr_mutex_lock(&file->cache_lock);
-    estat = gdpfs_file_fill_cache(files[fh], buf, read_size, offset, true);
-    ep_thr_mutex_unlock(&file->cache_lock);
-    return read_size;
 }
 
 size_t
@@ -827,6 +845,11 @@ static void free_fileref(gdp_event_t* ev)
 {
     EP_STAT estat;
     gdpfs_file_t* file = gdp_event_getudata(ev);
+    ep_thr_mutex_lock(&file->outstanding_reqs_lock);
+    if (--file->outstanding_reqs == 0) {
+        ep_thr_cond_signal(&file->outstanding_reqs_cond);
+    }
+    ep_thr_mutex_unlock(&file->outstanding_reqs_lock);
     estat = gdp_event_getstat(ev);
     if (!EP_STAT_ISOK(estat))
         ep_app_error("Could not properly append: %d", EP_STAT_DETAIL(estat));
@@ -844,6 +867,7 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     gdpfs_file_t *file;
     size_t written = 0;
     gdpfs_log_ent_t log_ent;
+    gdpfs_recno_t rc;
     gdpfs_fmeta_t entry = {
         .file_size   = info->file_size,
         .file_type   = info->file_type,
@@ -877,19 +901,29 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     estat = _file_ref(file);
     if (!EP_STAT_ISOK(estat))
         goto fail0;
-        
+    
+    ep_thr_mutex_lock(&file->outstanding_reqs_lock);
+    file->outstanding_reqs++;
+    ep_thr_mutex_unlock(&file->outstanding_reqs_lock);
+    
     // Write to cache. true is for overwriting cache
     if (use_cache)
     {
         ep_thr_mutex_lock(&file->cache_lock);
         gdpfs_file_fill_cache(file, buf, size, offset, true);
         ep_thr_mutex_lock(&file->figtree_lock);
-        ep_thr_mutex_unlock(&file->cache_lock);
-        if (size > 0)
-            ft_write(&file->figtree, offset, offset + size - 1, 0);
-        ep_thr_mutex_unlock(&file->figtree_lock);
     }
+    
+    ep_thr_mutex_unlock(&file->cache_lock);
+    rc = ++file->last_recno;
+    
+    if (size > 0)
+        ft_write(&file->figtree, offset, offset + size - 1, rc, file->log_handle);
+        
     estat = gdpfs_log_append(file->log_handle, &log_ent, free_fileref, file);
+    
+    ep_thr_mutex_unlock(&file->figtree_lock);
+    
     if (EP_STAT_ISOK(estat))
     {
         written = size;

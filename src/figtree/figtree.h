@@ -4,6 +4,8 @@
 #include "interval.h"
 #include "utils.h"
 
+#include "../gdpfs_log.h"
+
 void ftn_free(struct ft_node* this);
 
 typedef struct figtree {
@@ -15,15 +17,15 @@ void ft_init(struct figtree* this);
 
 /* Sets the bytes in the range [START, END] to correspond to VALUE. */
 void ft_write(struct figtree* this, byte_index_t start, byte_index_t end,
-              figtree_value_t value);
+              figtree_value_t value, gdpfs_log_t* log);
 
 /* Returns a pointer to the value at the specified byte LOCATION. */
-figtree_value_t* ft_lookup(struct figtree* this, byte_index_t location);
+figtree_value_t* ft_lookup(struct figtree* this, byte_index_t location, gdpfs_log_t* log);
 
 
 /* Returns an iterator to read over the specified range of bytes. */
 struct figtree_iter* ft_read(struct figtree* this,
-                             byte_index_t start, byte_index_t end);
+                             byte_index_t start, byte_index_t end, gdpfs_log_t* log);
 
 /* Deallocates the resources for the Fig Tree in the specified space. */
 void ft_dealloc(struct figtree* this);
@@ -50,7 +52,7 @@ typedef struct figtree_iter figiter_t;
 /* Gets the next FIG from the Fig Tree Iterator and populates NEXT with that
  * result. Returns true if there are additional FIGs in the iterator; returns
  * false if there are no more. */
-bool fti_next(struct figtree_iter* this, struct fig* next);
+bool fti_next(struct figtree_iter* this, struct fig* next, gdpfs_log_t* log);
 
 /* Deallocates the resources for the specified Fig Tree Iterator */
 void fti_free(struct figtree_iter* this);

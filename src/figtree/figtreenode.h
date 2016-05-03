@@ -23,6 +23,7 @@ struct ft_node {
     int subtrees_len;
     struct subtree_ptr subtrees[FT_SPLITLIMIT + 1];
     int HEIGHT;
+    bool dirty;
 };
 
 struct ft_node* ftn_new(int height, bool make_height);
