@@ -61,6 +61,7 @@ typedef struct
     size_t file_size;
     uint16_t file_perm;
     gdpfs_file_type_t file_type;
+    gdpfs_logent_type_t logent_type;
     off_t ent_offset;
     size_t ent_size;
     uint64_t magic;
@@ -227,8 +228,8 @@ gdpfs_file_create(uint64_t* fhp, gdpfs_file_gname_t log_iname,
     return GDPFS_STAT_OK;
 }
 
-static uint64_t
-open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
+static EP_STAT
+open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
         gdpfs_file_mode_t perm, bool init, bool strict_init)
 {
     EP_STAT estat;
@@ -237,11 +238,13 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
     char *cache_name = NULL;
     char *cache_bitmap_name = NULL;
     gdp_pname_t printable;
+    
+    *fhp = -1;
 
     fh = bitmap_reserve(fhs);
     if (fh == -1)
     {
-        *ret_stat = GDPFS_STAT_OOMEM;
+        estat = GDPFS_STAT_OOMEM;
         goto fail1;
     }
 
@@ -255,22 +258,16 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
         file = ep_mem_zalloc(sizeof(gdpfs_file_t));
         if (!file)
         {
-            if (ret_stat)
-                *ret_stat = GDPFS_STAT_OOMEM;
+            estat = GDPFS_STAT_OOMEM;
             goto fail0;
         }
         estat = gdpfs_log_open(&file->log_handle, log_name);
         if (!EP_STAT_ISOK(estat))
-        {
-            if (ret_stat)
-                *ret_stat = estat;
             goto fail0;
-        }
         file->hash_key = ep_mem_zalloc(sizeof(gdpfs_file_gname_t));
         if (!file->hash_key)
         {
-            if (ret_stat)
-                *ret_stat = GDPFS_STAT_OOMEM;
+            estat = GDPFS_STAT_OOMEM;
             goto fail0;
         }
         memcpy(file->hash_key, log_name, sizeof(gdpfs_file_gname_t));
@@ -282,16 +279,14 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
             if ((cache_name = ep_mem_zalloc(strlen(CACHE_DIR) + strlen("/")
                     + strlen(printable) + 1)) == 0)
             {
-                if (ret_stat)
-                    *ret_stat = GDPFS_STAT_OOMEM;
+                estat = GDPFS_STAT_OOMEM;
                 goto fail0;
             }
             sprintf(cache_name, "%s%s%s", CACHE_DIR, "/", printable);
             if ((cache_bitmap_name = ep_mem_zalloc(strlen(CACHE_DIR) + strlen("/")
                     + strlen(printable) + strlen(BITMAP_EXTENSION) + 1)) == 0)
             {
-                if (ret_stat)
-                    *ret_stat = GDPFS_STAT_OOMEM;
+                estat = GDPFS_STAT_OOMEM;
                 goto fail0;
             }
             sprintf(cache_bitmap_name, "%s%s%s%s", CACHE_DIR, "/",
@@ -300,15 +295,13 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
             // Open the cache files and put them in the file struct
             if ((file->cache_fd = open(cache_name, O_RDWR | O_CREAT, 0744)) == -1)
             {
-                if (ret_stat)
-                    *ret_stat = GDPFS_STAT_LOCAL_FS_FAIL;
+                estat = GDPFS_STAT_LOCAL_FS_FAIL;
                 goto fail0;
             }
 #ifdef USE_BITMAP
             if ((file->cache_bitmap_fd = open(cache_bitmap_name, O_RDWR | O_CREAT, 0744)) == -1)
             {
-                if (ret_stat)
-                    *ret_stat = GDPFS_STAT_LOCAL_FS_FAIL;
+                estat = GDPFS_STAT_LOCAL_FS_FAIL;
                 close(file->cache_fd);
                 goto fail0;
             }
@@ -319,14 +312,12 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
         
         if (ep_thr_mutex_init(&file->ref_count_lock, EP_THR_MUTEX_NORMAL) != 0)
         {
-            if (ret_stat)
-                *ret_stat = GDPFS_STAT_SYNCH_FAIL;
+            estat = GDPFS_STAT_SYNCH_FAIL;
             goto fail0;
         }
         if (ep_thr_mutex_init(&file->cache_lock, EP_THR_MUTEX_NORMAL) != 0)
         {
-            if (ret_stat)
-                *ret_stat = GDPFS_STAT_SYNCH_FAIL;
+            estat = GDPFS_STAT_SYNCH_FAIL;
             goto fail0;
         }
 
@@ -342,11 +333,7 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
     files[fh] = file;
     ep_thr_mutex_unlock(&open_lock);
     if (!EP_STAT_ISOK(estat))
-    {
-        if (ret_stat)
-            *ret_stat = estat;
         goto fail2;
-    }
 
     if (strict_init)
     {
@@ -362,8 +349,6 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
         if (!EP_STAT_ISOK(estat))
         {
             ep_app_error("Failed to load file info");
-            if (ret_stat)
-                *ret_stat = estat;
             goto fail2;
         }
         if (init)
@@ -377,24 +362,21 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
             }
             else if (current_info->file_type == GDPFS_FILE_TYPE_UNKNOWN || strict_init)
             {
-                if (ret_stat)
-                    *ret_stat = GDPFS_STAT_INVLDFTYPE;
+                estat = GDPFS_STAT_INVLDFTYPE;
                 goto fail2;
             }
         }
         else if (current_info->file_type != type)
         {
-            if (ret_stat)
-                *ret_stat = GDPFS_STAT_INVLDFTYPE;
+            estat = GDPFS_STAT_INVLDFTYPE;
             goto fail2;
         }
     }
 
     // success
-    if (ret_stat)
-        *ret_stat = GDPFS_STAT_OK;
 
-    return fh;
+    *fhp = fh;
+    return GDPFS_STAT_OK;
 
 fail0:
     ep_thr_mutex_unlock(&open_lock);
@@ -410,30 +392,36 @@ fail0:
         ep_mem_free(file);
     }
 fail1:
-    return -1;
+    return estat;
 fail2:
     gdpfs_file_close(fh);
-    return -1;
+    return estat;
 }
 
 uint64_t
 gdpfs_file_open(EP_STAT *ret_stat, gdpfs_file_gname_t name)
 {
-    return open_file(ret_stat, name, GDPFS_FILE_TYPE_UNKNOWN, 0, false, false);
+    uint64_t fh;
+    *ret_stat = open_file(&fh, name, GDPFS_FILE_TYPE_UNKNOWN, 0, false, false);
+    return fh;
 }
 
 uint64_t
 gdpfs_file_open_type(EP_STAT *ret_stat, gdpfs_file_gname_t name,
         gdpfs_file_type_t type)
 {
-    return open_file(ret_stat, name, type, 0, false, false);
+    uint64_t fh;
+    *ret_stat = open_file(&fh, name, type, 0, false, false);
+    return fh;
 }
 
 uint64_t
 gdpfs_file_open_init(EP_STAT *ret_stat, gdpfs_file_gname_t name,
         gdpfs_file_type_t type, gdpfs_file_perm_t perm, bool strict_init)
 {
-    return open_file(ret_stat, name, type, perm, true, strict_init);
+    uint64_t fh;
+    *ret_stat = open_file(&fh, name, type, perm, true, strict_init);
+    return fh;
 }
 
 EP_STAT
@@ -538,7 +526,6 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
         ep_app_error("Corrupt log entry in file.");
         goto fail0;
     }
-    // TODO: fill in cache on reads
 
     // limit read size to file size. Even though we may encounter a larger file
     // size deeper down, we don't want to read its data since that means that
@@ -644,12 +631,13 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     size_t written = 0;
     gdpfs_log_ent_t log_ent;
     gdpfs_fmeta_t entry = {
-        .file_size  = info->file_size,
-        .file_type  = info->file_type,
-        .file_perm  = info->file_perm,
-        .ent_offset = offset,
-        .ent_size   = size,
-        .magic      = MAGIC_NUMBER,
+        .file_size   = info->file_size,
+        .file_type   = info->file_type,
+        .file_perm   = info->file_perm,
+        .logent_type = GDPFS_LOGENT_TYPE_DATA,
+        .ent_offset  = offset,
+        .ent_size    = size,
+        .magic       = MAGIC_NUMBER,
     };
 
     // TODO: where are perms checked?

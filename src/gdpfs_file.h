@@ -9,6 +9,12 @@
 typedef gdpfs_log_gname_t gdpfs_file_gname_t;
 typedef uint16_t gdpfs_file_perm_t;
 
+typedef enum gdpfs_logent_type
+{
+    GDPFS_LOGENT_TYPE_DATA = 0,
+    GDPFS_LOGENT_TYPE_CHKPT = 1,
+} gdpfs_logent_type_t;
+
 typedef enum gdpfs_file_type
 {
     GDPFS_FILE_TYPE_REGULAR = 0,
