@@ -7,6 +7,7 @@
 
 #include "utils.h"
 #include "figtreenode.h"
+#include "figtree.h"
 #include "../gdpfs_log.h"
 #include "../gdpfs_file.h"
 
@@ -43,6 +44,62 @@ void subtree_clear(struct subtree_ptr* sptr, int height) {
         sptr->offset = 0;
         sptr->st = ftn_new(height, true);
     }
+}
+
+/* Adds NODE's children to the buffer, and then adds NODE to the buffer. */
+void get_dirty_helper(struct subtree_ptr* node, gdpfs_recno_t recno, struct ft_node** dirty, int* dirty_cap, int* dirty_len) {
+    int i;
+    struct ft_node* written;
+    if (!node->inmemory || node->st == NULL || !node->st->dirty) {
+        return;
+    }
+    
+    /* Add NODE's children to the buffer. */
+    for (i = 0; i < node->st->subtrees_len; i++) {
+        get_dirty_helper(&node->st->subtrees[i], recno, dirty, dirty_cap, dirty_len);
+    }
+    
+    /* Add NODE to the buffer. */
+    if (*dirty_len == *dirty_cap) {
+        (*dirty_cap) <<= 1;
+        *dirty = ep_mem_realloc(*dirty, (*dirty_cap) * sizeof(struct ft_node));
+    }
+    
+    written = &(*dirty)[*dirty_len];
+    node->st->dirty = false;
+    node->recno = recno;
+    node->offset = (*dirty_len) * sizeof(struct ft_node);
+    memcpy(written, node->st, sizeof(struct ft_node));
+    
+    /* Handle subtree pointers among node's children.
+     * Pointers to NULL subtrees that occur at the leaves of the tree are
+     * marked with the inmemory flag set to true and a null pointer.
+     * All other pointers need to be adjusted so that they work as expected
+     * when loaded from the GDP.
+     */
+    for (i = 0; i < written->subtrees_len; i++) {
+        if (written->subtrees[i].st != NULL) {
+            written->subtrees[i].inmemory = false;
+            written->subtrees[i].st = NULL;
+        }
+    }
+    
+    
+    (*dirty_len)++;
+}
+
+void get_dirty(struct ft_node** dirty, int* dirty_len, struct figtree* ft, gdpfs_recno_t chkpt_recno) {
+    struct subtree_ptr root;
+    int dirty_cap = 4;
+    
+    memset(&root, 0x00, sizeof(struct subtree_ptr));
+    root.st = ft->root;
+    root.inmemory = true;
+    
+    *dirty_len = 0;
+    *dirty = ep_mem_zalloc(dirty_cap * sizeof(struct ft_node));
+    
+    get_dirty_helper(&root, chkpt_recno, dirty, &dirty_cap, dirty_len);
 }
 
 struct ft_node* subtree_get(struct subtree_ptr* sptr, gdpfs_log_t* log) {

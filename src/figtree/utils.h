@@ -10,6 +10,8 @@
 typedef uint32_t byte_index_t;
 typedef long int figtree_value_t;
 
+struct figtree;
+
 #define FT_ORDER 2
 #define FT_SPLITLIMIT (1 + (FT_ORDER << 1))
 
@@ -34,5 +36,7 @@ void subtree_clear(struct subtree_ptr* sptr, int height);
 void subtree_set(struct subtree_ptr* sptr, struct ft_node* st);
 struct ft_node* subtree_get(struct subtree_ptr* sptr, gdpfs_log_t* log);
 void subtree_free(struct subtree_ptr* sptr);
+
+void get_dirty(struct ft_node** dirty, int* dirty_len, struct figtree* ft, gdpfs_recno_t chkpt_recno);
 
 #endif

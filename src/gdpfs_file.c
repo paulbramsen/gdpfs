@@ -543,6 +543,8 @@ EP_STAT
 _file_dealloc(gdpfs_file_t* file)
 {
     EP_STAT estat;
+    void* chkpt;
+    int len;
     ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
     estat = gdpfs_log_close(file->log_handle);
     if (use_cache)
@@ -562,6 +564,8 @@ _file_dealloc(gdpfs_file_t* file)
     
     /* Now checkpoint the log. */
     // TODO figure out which nodes are dirty in the tree and push them to the log daemon with an asynchronous write
+    get_dirty((struct ft_node**) &chkpt, &len, &file->figtree, file->last_recno + 1);
+    ep_mem_free(chkpt);
     
     ft_dealloc(&file->figtree);
     
