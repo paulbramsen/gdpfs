@@ -67,17 +67,6 @@ typedef struct
 
 typedef struct
 {
-    size_t file_size;
-    uint16_t file_perm;
-    gdpfs_file_type_t file_type;
-    gdpfs_logent_type_t logent_type;
-    off_t ent_offset;
-    size_t ent_size;
-    uint64_t magic;
-} gdpfs_fmeta_t;
-
-typedef struct
-{
     off_t start;
     size_t len;
     int* numleft;
