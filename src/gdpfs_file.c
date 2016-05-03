@@ -539,15 +539,15 @@ gdpfs_file_close(uint64_t fh)
     return estat;
 }
 
-EP_STAT
-_file_dealloc(gdpfs_file_t* file)
+void
+_file_chkpt(gdpfs_file_t* file)
 {
     EP_STAT estat;
     void* chkpt;
     int len;
     gdpfs_log_ent_t ent;
     gdpfs_file_info_t* info;
-
+    
     estat = _file_get_info_raw(&info, file);
     if (!EP_STAT_ISOK(estat))
     {
@@ -563,16 +563,6 @@ _file_dealloc(gdpfs_file_t* file)
         .ent_size    = 0,
         .magic       = MAGIC_NUMBER,
     };
-    
-    ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
-    if (use_cache)
-    {
-        close(file->cache_fd);
-#ifdef USE_BITMAP
-        close(file->cache_bitmap_fd);
-#endif
-    }
-    ep_mem_free(file->hash_key);
     
     /* Wait until there are no more pending operations, then checkpoint the log. */
     ep_thr_mutex_lock(&file->outstanding_reqs_lock);
@@ -592,9 +582,24 @@ _file_dealloc(gdpfs_file_t* file)
     estat = gdpfs_log_append(file->log_handle, &ent, NULL, NULL);
     EP_ASSERT (EP_STAT_ISOK(estat));
     gdpfs_log_ent_close(&ent);
+}
+
+EP_STAT
+_file_dealloc(gdpfs_file_t* file)
+{
+    EP_STAT estat = GDPFS_STAT_OK;
     
-    estat = gdpfs_log_close(file->log_handle);
-    EP_ASSERT (EP_STAT_ISOK(estat));
+    ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
+    if (use_cache)
+    {
+        close(file->cache_fd);
+#ifdef USE_BITMAP
+        close(file->cache_bitmap_fd);
+#endif
+    }
+    ep_mem_free(file->hash_key);
+    
+    _file_chkpt(file);
     
     ft_dealloc(&file->figtree);
     
