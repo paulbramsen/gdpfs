@@ -4,12 +4,20 @@
 #include <ep/ep.h>
 #include <gdp/gdp.h>
 
+typedef gdp_name_t gdpfs_log_gname_t;
+typedef gdp_event_cbfunc_t gdpfs_callback_t;
+
 struct gdpfs_log_ent
 {
     gdp_datum_t *datum;
 };
-typedef struct gdpfs_log gdpfs_log_t;
 typedef struct gdpfs_log_ent gdpfs_log_ent_t;
+struct gdpfs_log
+{
+    gdp_gcl_t *gcl_handle;
+    gdpfs_log_gname_t gname;
+};
+typedef struct gdpfs_log gdpfs_log_t;
 typedef int64_t gdpfs_recno_t;
 enum gdpfs_log_mode
 {
@@ -18,8 +26,6 @@ enum gdpfs_log_mode
     GDPFS_LOG_MODE_AO,
 };
 typedef enum gdpfs_log_mode gdpfs_log_mode_t;
-typedef gdp_name_t gdpfs_log_gname_t;
-typedef gdp_event_cbfunc_t gdpfs_callback_t;
 
 /*
  * global init of log subsystem
@@ -73,5 +79,8 @@ gdpfs_log_ent_recno(gdpfs_log_ent_t *ent);
 
 int
 gdpfs_log_ent_write(gdpfs_log_ent_t *ent, const void *buf, size_t size);
+
+int
+gdpfs_log_ent_drain(gdpfs_log_ent_t *ent, size_t size);
 
 #endif // _GDPFS_LOG_H_

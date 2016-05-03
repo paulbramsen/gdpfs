@@ -23,12 +23,6 @@ static pthread_t producer;
 static void *_producer_thread(void *arg);
 static EP_STAT _precreate_log(size_t index);
 
-struct gdpfs_log
-{
-    gdp_gcl_t *gcl_handle;
-    gdpfs_log_gname_t gname;
-};
-
 EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode)
 {
     EP_STAT estat;
@@ -352,4 +346,12 @@ int gdpfs_log_ent_write(gdpfs_log_ent_t *ent, const void *buf, size_t size)
     gdp_buf_t *datum_buf = gdp_datum_getbuf(ent->datum);
 
     return gdp_buf_write(datum_buf, buf, size);
+}
+
+int
+gdpfs_log_ent_drain(gdpfs_log_ent_t *ent, size_t size)
+{
+    gdp_buf_t *datum_buf = gdp_datum_getbuf(ent->datum);
+
+    return gdp_buf_drain(datum_buf, size);
 }

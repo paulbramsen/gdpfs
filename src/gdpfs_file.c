@@ -71,6 +71,16 @@ typedef struct
     uint64_t magic;
 } gdpfs_fmeta_t;
 
+typedef struct
+{
+    off_t start;
+    size_t len;
+    int* numleft;
+    EP_THR_MUTEX* lock;
+    EP_THR_COND* condvar;
+    char* writebuf;
+} gdpfs_readstate_t;
+
 #define MAX_FHS 1024
 #define RC_CAP 256
 const char * const CACHE_DIR = "/tmp/gdpfs-cache";
@@ -446,6 +456,7 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
                 ep_app_fatal("Corrupt log entry in file (#2).");
             }
             if (entry.ent_size > 0) {
+                //printf("Writing [%lu, %lu]: %lu\n", entry.ent_offset, entry.ent_offset + entry.ent_size - 1, gdpfs_log_ent_recno(&ents[enti]));
                 ft_write(&file->figtree, entry.ent_offset, entry.ent_offset + entry.ent_size - 1, gdpfs_log_ent_recno(&ents[enti]));
                 read = 0;
                 // while we're at it, populate the cache
@@ -524,13 +535,17 @@ EP_STAT
 gdpfs_file_close(uint64_t fh)
 {
     gdpfs_file_t *file;
+    EP_STAT estat;
 
     file = lookup_fh(fh);
     if (file == NULL)
         return GDPFS_STAT_BADFH;
     bitmap_release(fhs, fh);
 
-    return _file_unref(file);
+    ep_thr_mutex_lock(&open_lock);
+    estat = _file_unref(file);
+    ep_thr_mutex_unlock(&open_lock);
+    return estat;
 }
 
 EP_STAT
@@ -662,6 +677,32 @@ fail0:
     return 0;
 }
 
+void handle_read(gdp_event_t* ev)
+{
+    gdpfs_fmeta_t entry;
+    gdpfs_log_ent_t log_ent;
+    size_t data_size;
+    gdpfs_readstate_t* rs = gdp_event_getudata(ev);
+    log_ent.datum = gdp_event_getdatum(ev);
+    
+    data_size = gdpfs_log_ent_length(&log_ent);
+    if (gdpfs_log_ent_read(&log_ent, &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
+        || data_size != sizeof(gdpfs_fmeta_t) + entry.ent_size)
+    {
+        ep_app_fatal("Corrupt log entry in file.");
+    }
+    
+    gdpfs_log_ent_drain(&log_ent, rs->start - entry.ent_offset);
+    gdpfs_log_ent_read(&log_ent, rs->writebuf, rs->len);
+    
+    ep_thr_mutex_lock(rs->lock);
+    if (--*rs->numleft == 0) {
+        ep_thr_cond_signal(rs->condvar);
+    }
+    ep_thr_mutex_unlock(rs->lock);
+    ep_mem_free(rs);
+}
+
 static size_t
 do_read(uint64_t fh, char *buf, size_t size, off_t offset)
 {
@@ -689,7 +730,7 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
     }
 
     // check cache
-    if (use_cache) {
+    if (buf == NULL && use_cache) {
         bool hit;
         ep_thr_mutex_lock(&file->cache_lock);
         hit = gdpfs_file_get_cache(file, buf, size, offset);
@@ -699,6 +740,76 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
     }
 
     memset(buf, 0, size);
+    
+    /* On a miss, traverse the fig tree. */
+    if (size > 0)
+    {
+        fig_t indexgroup;
+        figiter_t* figterator;
+        int numleft = 0;
+        EP_THR_MUTEX lock;
+        EP_THR_COND condvar;
+        gdpfs_readstate_t* rs;
+        ep_thr_mutex_init(&lock, EP_THR_MUTEX_NORMAL);
+        ep_thr_cond_init(&condvar);
+        ep_thr_mutex_lock(&file->figtree_lock);
+        figterator = ft_read(&file->figtree, offset, offset + size - 1);
+        while (fti_next(figterator, &indexgroup)) {
+            if (indexgroup.value == 0) {
+                // We have to read from the cache here
+                EP_ASSERT(gdpfs_file_get_cache(file, buf + indexgroup.irange.left - offset, indexgroup.irange.right - indexgroup.irange.left + 1,
+                                               indexgroup.irange.left));
+                continue;
+            }
+            /* This if statement is really just a workaround for until we can get multiread working... */
+            if (indexgroup.value > 0) {
+                gdpfs_log_ent_t log_ent;
+                size_t data_size;
+                gdpfs_fmeta_t entry;
+                gdpfs_log_ent_open(file->log_handle, &log_ent, indexgroup.value);
+                data_size = gdpfs_log_ent_length(&log_ent);
+                if (gdpfs_log_ent_read(&log_ent, &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
+                    || data_size != sizeof(gdpfs_fmeta_t) + entry.ent_size)
+                {
+                    ep_app_fatal("Corrupt log entry in file.");
+                }
+    
+                gdpfs_log_ent_drain(&log_ent, indexgroup.irange.left - entry.ent_offset);
+                gdpfs_log_ent_read(&log_ent, buf + (indexgroup.irange.left - offset), indexgroup.irange.right - indexgroup.irange.left + 1);
+                continue;
+            }
+            rs = ep_mem_zalloc(sizeof(gdpfs_readstate_t)); // freed by the callback
+            rs->lock = &lock;
+            rs->condvar = &condvar;
+            rs->numleft = &numleft;
+            rs->start = indexgroup.irange.left;
+            rs->len = indexgroup.irange.right - indexgroup.irange.left + 1;
+            rs->writebuf = buf + (indexgroup.irange.left - offset);
+            ep_thr_mutex_lock(&lock);
+            numleft++;
+            ep_thr_mutex_unlock(&lock);
+            estat = gdp_gcl_multiread(file->log_handle->gcl_handle, indexgroup.value, 1, NULL, rs);
+            EP_ASSERT(EP_STAT_ISOK(estat));
+        }
+        ep_thr_mutex_unlock(&file->figtree_lock);
+        fti_free(figterator);
+        
+        ep_thr_mutex_lock(&lock);
+        // Technically we could make this an "if", but "while" is more idiomatic
+        while (numleft > 0) {
+            ep_thr_cond_wait(&condvar, &lock, NULL);
+        }
+        ep_thr_mutex_unlock(&lock);
+        
+        ep_thr_mutex_destroy(&lock);
+        ep_thr_cond_destroy(&condvar);
+        
+        return size;
+    }
+    
+    return 0;
+    
+    
     read_size = do_read_starting_at_rec_no(files[fh], buf, size, offset, -1);
     ep_thr_mutex_lock(&file->cache_lock);
     estat = gdpfs_file_fill_cache(files[fh], buf, read_size, offset, true);
@@ -772,7 +883,11 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     {
         ep_thr_mutex_lock(&file->cache_lock);
         gdpfs_file_fill_cache(file, buf, size, offset, true);
+        ep_thr_mutex_lock(&file->figtree_lock);
         ep_thr_mutex_unlock(&file->cache_lock);
+        if (size > 0)
+            ft_write(&file->figtree, offset, offset + size - 1, 0);
+        ep_thr_mutex_unlock(&file->figtree_lock);
     }
     estat = gdpfs_log_append(file->log_handle, &log_ent, free_fileref, file);
     if (EP_STAT_ISOK(estat))
