@@ -68,6 +68,9 @@ gdpfs_log_ent_read(gdpfs_log_ent_t *ent, void *buf, size_t size);
 size_t
 gdpfs_log_ent_peek(gdpfs_log_ent_t *ent, void *buf, size_t size);
 
+gdpfs_recno_t
+gdpfs_log_ent_recno(gdpfs_log_ent_t *ent);
+
 int
 gdpfs_log_ent_write(gdpfs_log_ent_t *ent, const void *buf, size_t size);
 

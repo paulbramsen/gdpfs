@@ -339,6 +339,11 @@ size_t gdpfs_log_ent_peek(gdpfs_log_ent_t *ent, void *buf, size_t size)
     return gdp_buf_peek(datum_buf, buf, size);
 }
 
+gdpfs_recno_t gdpfs_log_ent_recno(gdpfs_log_ent_t *ent)
+{
+    return gdp_datum_getrecno(ent->datum);
+}
+
 /*
  * Write size bytes from buf to ent. Returns 0 on success and -1 on failure.
  */
