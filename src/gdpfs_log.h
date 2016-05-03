@@ -6,6 +6,8 @@
 
 struct gdpfs_log_ent
 {
+    int cached_fd;
+    bool is_cached;
     gdp_datum_t *datum;
 };
 typedef struct gdpfs_log gdpfs_log_t;
