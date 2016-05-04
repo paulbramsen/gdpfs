@@ -386,7 +386,13 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
     }
     
     ep_thr_mutex_lock(&file->figtree_lock);
-    if (!file->figtree_initialized)
+    if (strict_init) {
+        // Fast path for a common case
+        ft_init(&file->figtree);
+        file->last_recno = 1;
+        file->figtree_initialized = true;
+    }
+    else if (!file->figtree_initialized)
     {
         gdpfs_log_ent_t* ents;
         gdpfs_recno_t recno;
@@ -406,6 +412,7 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
         if (EP_STAT_IS_SAME(estat, GDPFS_STAT_NOTFOUND))
         {
             // Empty log, just initialize the fig tree
+            recno = 0;
         }
         for (; recno > 0; recno--)
         {
@@ -429,6 +436,10 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
             {
                 EP_ASSERT_REQUIRE((entry.ent_size % sizeof(figtree_node_t)) == 0);
                 
+                //printf("Found the checkpoint!\n");
+                
+                EP_ASSERT(entry.ent_size > 0);
+                
                 /* Get the last node in the log; that is the root. */
                 figtree_node_t* root = ep_mem_zalloc(sizeof(figtree_node_t));
                 gdpfs_log_ent_drain(&ents[enti], data_size - sizeof(figtree_node_t));
@@ -442,6 +453,7 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
         
         if (recno == 0) {
             /* No index for this file... */
+            //printf("No index for this file\n");
             ft_init(&file->figtree);
         }
         
@@ -580,16 +592,21 @@ _file_chkpt(gdpfs_file_t* file)
     
     /* Now checkpoint the log. */
     // TODO figure out which nodes are dirty in the tree and push them to the log daemon with an asynchronous write
-    get_dirty(&chkpt, &len, &file->figtree, file->last_recno + 1);
-    entry.ent_size = len * sizeof(figtree_node_t);
-    gdpfs_log_ent_init(&ent);
-    gdpfs_log_ent_write(&ent, &entry, sizeof(gdpfs_fmeta_t));
-    gdpfs_log_ent_write(&ent, chkpt, entry.ent_size);
-    ep_mem_free(chkpt);
+    get_dirty(&chkpt, &len, &file->figtree, ++file->last_recno);
+    if (len > 0)
+    {
+        entry.ent_size = len * sizeof(figtree_node_t);
+        gdpfs_log_ent_init(&ent);
+        gdpfs_log_ent_write(&ent, &entry, sizeof(gdpfs_fmeta_t));
+        gdpfs_log_ent_write(&ent, chkpt, entry.ent_size);
+        ep_mem_free(chkpt);
     
-    estat = gdpfs_log_append(file->log_handle, &ent, NULL, NULL);
-    EP_ASSERT (EP_STAT_ISOK(estat));
-    gdpfs_log_ent_close(&ent);
+        estat = gdpfs_log_append(file->log_handle, &ent, NULL, NULL);
+        EP_ASSERT (EP_STAT_ISOK(estat));
+        gdpfs_log_ent_close(&ent);
+    }
+    else
+        ep_mem_free(chkpt);
 }
 
 EP_STAT
@@ -766,7 +783,6 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
     gdpfs_file_t *file;
     gdpfs_file_info_t *info;
     EP_STAT estat;
-
     file = lookup_fh(fh);
     if (file == NULL)
         return 0;
@@ -1240,7 +1256,7 @@ check:
     }
     else
     {
-        printf("Cache miss\n");
+        //printf("Cache miss\n");
     }
     
     return hit;

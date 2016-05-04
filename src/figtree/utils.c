@@ -81,6 +81,8 @@ void get_dirty_helper(struct subtree_ptr* node, gdpfs_recno_t recno, struct ft_n
         if (written->subtrees[i].st != NULL) {
             written->subtrees[i].inmemory = false;
             written->subtrees[i].st = NULL;
+        } else {
+            EP_ASSERT(written->subtrees[i].inmemory == true);
         }
     }
     
@@ -110,9 +112,12 @@ struct ft_node* subtree_get(struct subtree_ptr* sptr, gdpfs_log_t* log) {
         EP_STAT estat;
         size_t data_size;
         
-        printf("Going to the GDP to read subtree...\n");
+        //printf("Going to the GDP to read subtree...\n");
         
         estat = gdpfs_log_ent_open(log, &log_ent, sptr->recno);
+        if (!EP_STAT_ISOK(estat)) {
+            printf("Recno is %ld\n", sptr->recno);
+        }
         EP_ASSERT_INSIST(EP_STAT_ISOK(estat));
         
         data_size = gdpfs_log_ent_length(&log_ent);
@@ -126,7 +131,7 @@ struct ft_node* subtree_get(struct subtree_ptr* sptr, gdpfs_log_t* log) {
         
         gdpfs_log_ent_drain(&log_ent, sptr->offset);
         
-        sptr->st = ftn_new(0, false);
+        sptr->st = mem_alloc(sizeof(struct ft_node));
         
         gdpfs_log_ent_read(&log_ent, sptr->st, sizeof(struct ft_node));
     }
