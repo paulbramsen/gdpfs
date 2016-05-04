@@ -80,7 +80,7 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
                                      previval->right + 1,
                                      currival->left - 1, true);
                 }
-                
+
                 /* The entry in this node immediately after current will either
                  * be disjoint from RANGE, or will left-overlap it. It can't
                  * right-overlap it (unless it also left-overlaps it).
@@ -132,7 +132,7 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
                  * the appropriate entries in the node with the new one.
                  */
                 ftn_replaceEntries(currnode, i, j, range, value);
-                
+
                 goto treeinsertion;
             } else if (i_rightOf_int(currival, range)) {
                 path[*path_len] = currnode;
@@ -176,7 +176,7 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
             rv = ftn_insert(insertinto, topushent, insertindex, left, right);
             mem_free(topushnode);
             topushnode = rv;
-            
+
             if (rightcontinuation) {
                 /*
                  * All indices in the pathIndices and path lists at or before
@@ -184,7 +184,7 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
                  * continuation that has not yet been executed. If any nodes get
                  * split along that path, we need to update the path
                  * accordingly.
-                 * 
+                 *
                  * Special case: we need to artificially decrement the stored
                  * insertindex at the FINALSHAREDINDEX because the left
                  * continuation takes the left subtree of the primary range
@@ -226,7 +226,7 @@ void _ft_insert(struct figtree* this, struct insertargs* args,
                 }
                 goto endtreeinsertion;
             }
-            
+
             topushent = &topushnode->entries[0];
             left = subtree_get(&topushnode->subtrees[0], log);
             right = subtree_get(&topushnode->subtrees[1], log);
@@ -272,7 +272,7 @@ void ft_write(struct figtree* this, byte_index_t start, byte_index_t end,
     iargs.value = value;
     iargs.at = this->root;
     i_init(&iargs.valid, BYTE_INDEX_MIN, BYTE_INDEX_MAX);
-    
+
     _ft_insert(this, &iargs, path, pathIndices, &path_len, false, &starinserts, log);
     if (starinserts.hasrightc) {
         _ft_insert(this, &starinserts.rightc, path, pathIndices, &path_len,
@@ -389,7 +389,7 @@ struct figtree_iter* ft_read(struct figtree* this,
             i_leftOf_int(&rs->valid, &rs->node->entries[rs->pos].irange))) {
         rs = &iterstates[--iterator->depth];
     }
-    
+
     return iterator;
 }
 

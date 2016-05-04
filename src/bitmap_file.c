@@ -42,7 +42,7 @@ bool bitmap_file_set_range(int fd, off_t left, off_t right)
         ep_app_error("Bad arguments to bitmap_file_set_range: [%lu, %lu)", left, right);
         return false;
     }
-    
+
     /* It's slightly more efficient this way; we treat the range as inclusive at this point,
        and have to consider one fewer byte if it's actually byte-aligned. */
     right -= 1;
@@ -51,30 +51,30 @@ bool bitmap_file_set_range(int fd, off_t left, off_t right)
     off_t rightbyte = right >> 3;
     off_t leftbits = left & 0x7;
     off_t rightbits = right & 0x7;
-    
+
     off_t lrv = lseek(fd, leftbyte, SEEK_SET);
     if (lrv == -1)
     {
         ep_app_error("lseek failed: %d", errno);
         return false;
     }
-    
+
     uint8_t chunk[BMP_CHUNKSIZE];
     uint8_t mask;
     ssize_t rv;
-    
+
     uint8_t leftmask = ((uint8_t) 0xFF) >> leftbits;
     uint8_t rightmask = ((uint8_t) 0xFF) << (7 - rightbits);
-    
+
     off_t bytesleft;
-    
+
     /* Read the first byte. */
     rv = read(fd, chunk, 1);
     if (rv == 0)
         chunk[0] = 0x00;
     else
         lseek(fd, -1, SEEK_CUR);
-    
+
     if (leftbyte == rightbyte)
     {
         mask = leftmask & rightmask;
@@ -90,7 +90,7 @@ bool bitmap_file_set_range(int fd, off_t left, off_t right)
             return false;
         bytesleft = rightbyte - leftbyte;
         memset(chunk, 0xFF, bytesleft < BMP_CHUNKSIZE ? bytesleft : BMP_CHUNKSIZE);
-        
+
         while (bytesleft > BMP_CHUNKSIZE) // all but the last chunk
         {
             rv = write(fd, chunk, BMP_CHUNKSIZE);
@@ -120,7 +120,7 @@ bool bitmap_file_isset(int fd, off_t left, off_t right)
         ep_app_error("Bad arguments to bitmap_file_isset: [%lu, %lu)", left, right);
         return false;
     }
-    
+
     /* It's slightly more efficient this way; we treat the range as inclusive at this point,
        and have to consider one fewer byte if it's actually byte-aligned. */
     right -= 1;
@@ -129,29 +129,29 @@ bool bitmap_file_isset(int fd, off_t left, off_t right)
     off_t rightbyte = right >> 3;
     off_t leftbits = left & 0x7;
     off_t rightbits = right & 0x7;
-    
+
     off_t lrv = lseek(fd, leftbyte, SEEK_SET);
     if (lrv == -1)
     {
         ep_app_error("lseek failed: %d", errno);
         return false;
     }
-    
+
     uint8_t chunk[BMP_CHUNKSIZE];
     uint8_t mask;
     ssize_t rv;
-    
+
     uint8_t leftmask = ((uint8_t) 0xFF) >> leftbits;
     uint8_t rightmask = ((uint8_t) 0xFF) << (7 - rightbits);
-    
+
     off_t bytesleft;
     int i;
-    
+
     /* Read the first byte. */
     rv = read(fd, chunk, 1);
     if (rv != 1)
         return false;
-    
+
     if (leftbyte == rightbyte)
     {
         mask = leftmask & rightmask;

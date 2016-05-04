@@ -412,7 +412,7 @@ gdpfs_dir_remove(uint64_t fh, const char *name, gdpfs_file_type_t type)
 
     offset = 0;
     estat = GDPFS_STAT_NOTFOUND;
-    
+
     estat = _find_insert_offset(&offset, fh, name, &phys_ent);
     if (!EP_STAT_IS_SAME(estat, GDPFS_STAT_FILE_EXISTS))
     {
@@ -420,17 +420,17 @@ gdpfs_dir_remove(uint64_t fh, const char *name, gdpfs_file_type_t type)
         return estat;
     }
     estat = GDPFS_STAT_OK;
-    
+
     if (type != GDPFS_FILE_TYPE_UNKNOWN)
     {
         filefh = gdpfs_file_open_type(&estat, phys_ent.gname, type);
         if (!EP_STAT_ISOK(estat))
             return estat;
-            
+
         if (type == GDPFS_FILE_TYPE_DIR)
         {
             bool isempty;
-            
+
             // Check to make sure that the directory is empty
             estat = gdpfs_dir_isempty(&isempty, filefh);
             if (!EP_STAT_ISOK(estat))
@@ -446,7 +446,7 @@ gdpfs_dir_remove(uint64_t fh, const char *name, gdpfs_file_type_t type)
         }
         gdpfs_file_close(filefh);
     }
-    
+
     phys_ent.in_use = false;
     size = gdpfs_file_write(fh, &phys_ent, sizeof(gdpfs_dir_entry_phys_t), offset);
     if (size == 0)
@@ -458,7 +458,7 @@ gdpfs_dir_remove(uint64_t fh, const char *name, gdpfs_file_type_t type)
         estat = GDPFS_STAT_CORRUPT;
     }
     return estat;
-    
+
 closeandfail:
     gdpfs_file_close(filefh);
     return estat;
