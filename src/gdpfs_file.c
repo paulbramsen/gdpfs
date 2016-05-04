@@ -65,7 +65,7 @@ typedef struct
     bool figtree_initialized;
     EP_THR_MUTEX ref_count_lock;
     EP_THR_MUTEX cache_lock;
-    EP_THR_MUTEX figtree_lock;
+    EP_THR_RWLOCK figtree_lock;
 } gdpfs_file_t;
 
 typedef struct
@@ -326,7 +326,7 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
         
         if (ep_thr_mutex_init(&file->ref_count_lock, EP_THR_MUTEX_NORMAL) != 0 ||
             ep_thr_mutex_init(&file->cache_lock, EP_THR_MUTEX_NORMAL) != 0 ||
-            ep_thr_mutex_init(&file->figtree_lock, EP_THR_MUTEX_NORMAL) != 0 ||
+            ep_thr_rwlock_init(&file->figtree_lock) != 0 ||
             ep_thr_mutex_init(&file->index_flush_lock, EP_THR_MUTEX_NORMAL) != 0 ||
             ep_thr_cond_init(&file->index_flush_cond) != 0)
         {
@@ -391,7 +391,7 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
     //gdp_pname_t pn;
     //gdp_printable_name(file->log_handle->gname, pn);
     //printf("Log is %s\n", pn);
-    ep_thr_mutex_lock(&file->figtree_lock);
+    ep_thr_rwlock_wrlock(&file->figtree_lock);
     if (strict_init) {
         // Fast path for a common case
         //printf("Optimizing\n");
@@ -497,7 +497,7 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
         ep_mem_free(ents);
         file->figtree_initialized = true;
     }
-    ep_thr_mutex_unlock(&file->figtree_lock);
+    ep_thr_rwlock_unlock(&file->figtree_lock);
 
     // success
 
@@ -610,7 +610,7 @@ _file_chkpt_finish(gdp_event_t* ev)
     
     EP_ASSERT (ep_thr_mutex_destroy(&file->ref_count_lock) == 0);
     EP_ASSERT (ep_thr_mutex_destroy(&file->cache_lock) == 0);
-    EP_ASSERT (ep_thr_mutex_destroy(&file->figtree_lock) == 0);
+    EP_ASSERT (ep_thr_rwlock_destroy(&file->figtree_lock) == 0);
     EP_ASSERT (ep_thr_mutex_destroy(&file->index_flush_lock) == 0);
     EP_ASSERT (ep_thr_cond_destroy(&file->index_flush_cond) == 0);
     ep_mem_free(file);
@@ -646,9 +646,11 @@ _file_chkpt(gdpfs_file_t* file)
     
     /* Now checkpoint the log. */
     //gdp_pname_t pn;
-    //gdp_printable_name(file->log_handle->gname, pn);
+    //gdp_printable_name(file->_log_handle->gname, pn);
     //printf("%s: Checkpoint at record %ld\n", pn, file->last_recno + 1);
+    ep_thr_rwlock_wrlock(&file->figtree_lock);
     get_dirty(&chkpt, &len, &file->figtree, ++file->last_recno);
+    ep_thr_rwlock_unlock(&file->figtree_lock);
     if (len > 0)
     {
         file->index_flush_reqs++;
@@ -866,7 +868,7 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
         gdpfs_readstate_t* rs;
         ep_thr_mutex_init(&lock, EP_THR_MUTEX_NORMAL);
         ep_thr_cond_init(&condvar);
-        ep_thr_mutex_lock(&file->figtree_lock);
+        ep_thr_rwlock_wrlock(&file->figtree_lock);
         figterator = ft_read(&file->figtree, offset, offset + size - 1, file->log_handle);
         while (fti_next(figterator, &indexgroup, file->log_handle)) {
             if (indexgroup.value == 0) {
@@ -890,7 +892,8 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
                 }
     
                 gdpfs_log_ent_drain(&log_ent, indexgroup.irange.left - entry.ent_offset);
-                gdpfs_log_ent_read(&log_ent, buf + (indexgroup.irange.left - offset), indexgroup.irange.right - indexgroup.irange.left + 1);
+                EP_ASSERT_REQUIRE(gdpfs_log_ent_read(&log_ent, buf + (indexgroup.irange.left - offset), indexgroup.irange.right - indexgroup.irange.left + 1) ==
+                    indexgroup.irange.right - indexgroup.irange.left + 1);
                 gdpfs_log_ent_close(&log_ent);
                 continue;
             }
@@ -907,7 +910,7 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
             estat = gdp_gcl_multiread(file->log_handle->gcl_handle, indexgroup.value, 1, NULL, rs);
             EP_ASSERT(EP_STAT_ISOK(estat));
         }
-        ep_thr_mutex_unlock(&file->figtree_lock);
+        ep_thr_rwlock_unlock(&file->figtree_lock);
         fti_free(figterator);
         
         ep_thr_mutex_lock(&lock);
@@ -1007,10 +1010,12 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     {
         ep_thr_mutex_lock(&file->cache_lock);
         gdpfs_file_fill_cache(file, buf, size, offset, true);
-        ep_thr_mutex_lock(&file->figtree_lock);
+        ep_thr_rwlock_wrlock(&file->figtree_lock);
+        ep_thr_mutex_unlock(&file->cache_lock);
     }
+    else
+        ep_thr_rwlock_wrlock(&file->figtree_lock);
     
-    ep_thr_mutex_unlock(&file->cache_lock);
     rc = ++file->last_recno;
     
     if (size > 0)
@@ -1018,7 +1023,7 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
         
     estat = gdpfs_log_append(file->log_handle, &log_ent, free_fileref, file);
     
-    ep_thr_mutex_unlock(&file->figtree_lock);
+    ep_thr_rwlock_unlock(&file->figtree_lock);
     
     if (EP_STAT_ISOK(estat))
     {
