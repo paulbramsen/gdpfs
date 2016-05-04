@@ -22,7 +22,7 @@ void _ftn_entries_add(struct ft_node* this, int index, struct ft_ent* new) {
             (this->entries_len - index) * sizeof(struct ft_ent));
     memcpy(&this->entries[index], new, sizeof(struct ft_ent));
     this->entries_len++;
-}   
+}
 
 void _ftn_subtrees_add(struct ft_node* this, int index, struct ft_node* new) {
     ASSERT(index >= 0 && index <= this->subtrees_len &&
@@ -42,7 +42,7 @@ struct ft_node* ftn_new(int height, bool make_height) {
     this->dirty = true;
 
     ftn_clear(this, make_height);
-    
+
     return this;
 }
 
@@ -52,7 +52,7 @@ void ftn_clear(struct ft_node* this, bool make_height) {
     for (i = 0; i < this->subtrees_len; i++) {
         subtree_free(&this->subtrees[i]);
     }
-    
+
     if (this->HEIGHT == 0 || !make_height) {
         firstchild = NULL;
     } else {
@@ -127,11 +127,11 @@ void ftn_replaceEntries(struct ft_node* this, int start, int end,
     for (i = start + 1; i < end; i++) {
         subtree_free(&this->subtrees[i]);
     }
-    
+
     memcpy(&this->entries[start].irange, newent_interval,
            sizeof(struct interval));
     this->entries[start].value = newent_value;
-    
+
     memmove(&this->entries[start + 1], &this->entries[end],
             (this->entries_len - end) * sizeof(struct ft_ent));
     memmove(&this->subtrees[start + 1], &this->subtrees[end],
@@ -145,12 +145,12 @@ void ftn_replaceEntries(struct ft_node* this, int start, int end,
 void ftn_pruneTo(struct ft_node* this, struct interval* valid) {
     struct subtree_ptr* subtree;
     struct interval* entryint;
-    
+
     bool entrydel[this->entries_len];
     bool subtreedel[this->subtrees_len];
     int i = 0;
     int j;
-    
+
     if (!valid->nonempty) {
         ftn_clear(this, true);
         return;
@@ -233,7 +233,7 @@ void ftn_pruneTo(struct ft_node* this, struct interval* valid) {
         }
         entryint = &this->entries[i].irange;
         // don't assign to subtree, since henceforth we only need to remove
-    }   
+    }
 
     performdeletes:
     for (i = 0, j = 0; i < this->entries_len; i++) {

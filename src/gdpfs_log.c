@@ -28,11 +28,11 @@ static pthread_t producer;
 static void *_producer_thread(void *arg);
 static EP_STAT _precreate_log(size_t index);
 
-EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode)
+EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode, char *gdp_router_addr)
 {
     EP_STAT estat;
 
-    estat = gdp_init(NULL);
+    estat = gdp_init(gdp_router_addr);
 
     precreated_front = 0;
     precreated_back = 0;
@@ -44,7 +44,7 @@ EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode)
     // Create thread to do precreate threads. Currently our synchronization by design
     // can only work for one of these producers.
     pthread_create(&producer, NULL, _producer_thread, NULL);
-    
+
     ep_thr_mutex_init(&creation_mutex, EP_THR_MUTEX_DEFAULT);
     if (!EP_STAT_ISOK(estat))
     {
@@ -253,6 +253,7 @@ gdpfs_log_ent_init(gdpfs_log_ent_t *log_ent)
     log_ent->is_cached = false;
     log_ent->cached_fd = -1;
     log_ent->cached_recno = 0;
+
     if (log_ent->datum == NULL)
         return GDPFS_STAT_OOMEM;
     else
@@ -422,9 +423,9 @@ gdpfs_recno_t gdpfs_log_ent_recno(gdpfs_log_ent_t *ent)
 int gdpfs_log_ent_write(gdpfs_log_ent_t *ent, const void *buf, size_t size)
 {
     gdp_buf_t *datum_buf;
-    
+
     EP_ASSERT_REQUIRE(!ent->is_cached);
-    
+
     datum_buf = gdp_datum_getbuf(ent->datum);
     return gdp_buf_write(datum_buf, buf, size);
 }

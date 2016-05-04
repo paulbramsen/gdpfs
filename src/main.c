@@ -17,12 +17,13 @@ static void
 usage(void)
 {
     fprintf(stderr,
-        "Usage: %s [-hrd] logname servername -- [fuse args]\n"
+        "Usage: %s [-hrd] [-G gdp_router] logname servername -- [fuse args]\n"
         "    logname: GDP address of filesystem root directory log\n"
         "    servername: GDP address of log daemon to create new logs on\n"
         "    -h display this usage message and exit\n"
         "    -r mount the filesys in read only mode\n"
-        "    -d disable the cache\n",
+        "    -d disable the cache\n"
+        "    -G IP host to contact for GDP router\n",
         ep_app_getprogname());
     exit(EX_USAGE);
 }
@@ -37,6 +38,7 @@ int
 main(int argc, char *argv[])
 {
     char *gclpname;
+    char *gdp_router_addr = NULL;
     int opt;
     int fuseargc;
     bool read_only = false;
@@ -50,7 +52,7 @@ main(int argc, char *argv[])
          fuseargc--);
     argc -= fuseargc;
 
-    while ((opt = getopt(argc, argv, "hrd::")) > 0)
+    while ((opt = getopt(argc, argv, "G:hrd::")) > 0)
     {
         switch (opt)
         {
@@ -64,6 +66,10 @@ main(int argc, char *argv[])
 
         case 'd':
             use_cache = false;
+            break;
+
+        case 'G':
+            gdp_router_addr = optarg;
             break;
 
         default:
@@ -95,5 +101,5 @@ main(int argc, char *argv[])
     argc++;
 
     signal(SIGINT, sig_int);
-    return gdpfs_run(gclpname, read_only, use_cache, argc, argv);
+    return gdpfs_run(gclpname, gdp_router_addr, read_only, use_cache, argc, argv);
 }

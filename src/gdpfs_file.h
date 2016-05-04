@@ -52,7 +52,7 @@ typedef struct
  * global file subsystem intiailization
  */
 EP_STAT
-init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool use_cache);
+init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool use_cache, char *gdp_router_addr);
 
 void
 stop_gdpfs_file();

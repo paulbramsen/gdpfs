@@ -473,7 +473,7 @@ static struct fuse_operations gdpfs_oper = {
     .utimens        = gdpfs_utimens,
 };
 
-int gdpfs_run(char *root_log, bool ro, bool use_cache, int fuse_argc, char *fuse_argv[])
+int gdpfs_run(char *root_log, char *gdp_router_addr, bool ro, bool use_cache, int fuse_argc, char *fuse_argv[])
 {
     EP_STAT estat;
     int ret;
@@ -484,7 +484,7 @@ int gdpfs_run(char *root_log, bool ro, bool use_cache, int fuse_argc, char *fuse
         fs_mode = GDPFS_FILE_MODE_RW;
 
     // need to init file before dir
-    estat = init_gdpfs_file(fs_mode, use_cache);
+    estat = init_gdpfs_file(fs_mode, use_cache, gdp_router_addr);
     if (!EP_STAT_ISOK(estat))
         exit(EX_UNAVAILABLE);
     estat = init_gdpfs_dir(root_log);
