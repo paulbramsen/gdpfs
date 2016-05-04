@@ -22,6 +22,8 @@ if [ $1 = "gdpfs" ]; then
     DIR="gdpfs"
 elif [ $1 = "redis" ]; then
     DIR="redis-3.2"
+elif [ $1 = "oltp" ]; then
+    DIR="oltpbench"
 elif [ $1 = "sqlite" ]; then
     DIR="sqlite-autoconf-3120200"
 else
@@ -45,8 +47,15 @@ function timed() {
     accum=`awk "BEGIN{print $new+$accum}"`
 }
 
-timed "cp -r $FILE ."
-timed "tar zxf $DIR.tar.gz"
-cd $DIR
-timed "make"
-echo "TIME IS: $accum seconds"
+if [ $1 = "oltp" ]; then
+    timed "cp -r $FILE ."
+    timed "tar zxf $DIR.tar.gz"
+    cd $DIR
+    timed "./oltpbenchmark -b tpcc -c config/sample_tpcc_config.xml --create=true --load=true --execute=true -s 5 -o outputfile"
+else
+    timed "cp -r $FILE ."
+    timed "tar zxf $DIR.tar.gz"
+    cd $DIR
+    timed "make"
+    echo "TIME IS: $accum seconds"
+fi
