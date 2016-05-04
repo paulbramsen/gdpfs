@@ -80,8 +80,6 @@ typedef struct
 
 #define MAX_FHS 1024
 #define RC_CAP 256
-const char * const CACHE_DIR = "/tmp/gdpfs-cache";
-const char * const BITMAP_EXTENSION = "-bitmap";
 static bitmap_t *fhs;
 static gdpfs_file_t **files;
 static EP_HASH *file_hash;
@@ -747,10 +745,6 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
         goto fail0;
     }
     
-    printf("Read ");
-    gdp_datum_print(log_ent.datum,	// message to print
-					stdout,					// file to print it to
-					0);
     data_size = gdpfs_log_ent_length(&log_ent);
     if (gdpfs_log_ent_read(&log_ent, &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
         || data_size != sizeof(gdpfs_fmeta_t) + entry.ent_size)

@@ -1,14 +1,18 @@
+#include "gdpfs.h"
 #include "gdpfs_log.h"
-
 #include "gdpfs_stat.h"
 #include <ep/ep_app.h>
+#include <ep/ep_assert.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ep/ep_thr.h>
 #include <pthread.h>
-
 #define GDP_GCLMD_NONCE		0xA0A0A0A0	// CTM (creation time)
 #define PRECREATED_MAX          1024
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 extern char* logd_xname;
 static gdp_iomode_t gcl_mode;
@@ -244,7 +248,8 @@ EP_STAT
 gdpfs_log_ent_init(gdpfs_log_ent_t *log_ent)
 {
     log_ent->datum = gdp_datum_new();
-    
+    log_ent->is_cached = false;
+    log_ent->cached_fd = -1;
     if (log_ent->datum == NULL)
         return GDPFS_STAT_OOMEM;
     else
@@ -259,7 +264,10 @@ EP_STAT
 gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t *ent, gdpfs_recno_t recno)
 {
     EP_STAT estat;
-
+    gdp_pname_t printable_name;
+    char cachename[GDP_GCL_PNAME_LEN + 100];
+    struct stat st;
+    int fd;
 
     if (gcl_mode == GDP_MODE_AO)
     {
@@ -270,24 +278,52 @@ gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t *ent, gdpfs_recno_t recn
     if (!EP_STAT_ISOK(estat))
         return estat;
 
-    estat = gdp_gcl_read(handle->gcl_handle, recno, ent->datum);
-    if (!EP_STAT_ISOK(estat))
+    /* only cache if recno is not -1 */
+    if (recno >= 0)
     {
-        if (EP_STAT_DETAIL(estat) == _GDP_CCODE_NOTFOUND)
+        gdp_printable_name(handle->gname, printable_name);
+        snprintf(cachename, GDP_GCL_PNAME_LEN + 100, "%s/LOGCACHE%s-%lu", CACHE_DIR, printable_name, recno);
+        if (stat(cachename, &st) == 0)
         {
-            estat = GDPFS_STAT_NOTFOUND;
+            fd = open(cachename, O_RDWR | O_TRUNC | O_CREAT, 00744);
+            /* fill in cache */
+            estat = gdp_gcl_read(handle->gcl_handle, recno, ent->datum);
+            if (!EP_STAT_ISOK(estat))
+                goto fail0;
+            gdp_buf_t *buf = gdp_datum_getbuf(ent->datum);
+            size_t length = gdp_buf_getlength(buf);
+            void *bounce = ep_mem_zalloc(length);
+            EP_ASSERT(length == gdp_buf_read(buf, bounce, length));
+            EP_ASSERT(length == write(fd, bounce, length));
+            lseek(fd, 0, SEEK_SET);
         }
         else
         {
-            char sbuf[100];
-            ep_app_error("Cannot read GCL:\n    %s",
-                ep_stat_tostr(estat, sbuf, sizeof sbuf));
+            fd = open(cachename, O_RDWR, 00744);
         }
-        goto fail0;
+        ent->cached_fd = fd;
+        ent->is_cached = true;
     }
+    else
+    {
+        estat = gdp_gcl_read(handle->gcl_handle, recno, ent->datum);
+        if (!EP_STAT_ISOK(estat))
+            goto fail0;
+    }
+
     return estat;
 
 fail0:
+    if (EP_STAT_DETAIL(estat) == _GDP_CCODE_NOTFOUND)
+    {
+        estat = GDPFS_STAT_NOTFOUND;
+    }
+    else
+    {
+        char sbuf[100];
+        ep_app_error("Cannot read GCL:\n    %s",
+            ep_stat_tostr(estat, sbuf, sizeof sbuf));
+    }
     gdp_datum_free(ent->datum);
     return estat;
 }
@@ -298,10 +334,18 @@ fail0:
 void gdpfs_log_ent_close(gdpfs_log_ent_t *ent)
 {
     gdp_datum_free(ent->datum);
+    if (ent->is_cached)
+        close(ent->cached_fd);
 }
 
 size_t gdpfs_log_ent_length(gdpfs_log_ent_t *ent)
 {
+    if (ent->is_cached)
+    {
+        struct stat st;
+        fstat(ent->cached_fd, &st);
+        return st.st_size;
+    }
     return gdp_buf_getlength(gdp_datum_getbuf(ent->datum));
 }
 
@@ -311,20 +355,25 @@ size_t gdpfs_log_ent_length(gdpfs_log_ent_t *ent)
  */
 size_t gdpfs_log_ent_read(gdpfs_log_ent_t *ent, void *buf, size_t size)
 {
-    gdp_buf_t *datum_buf = gdp_datum_getbuf(ent->datum);
-
-    if (buf == NULL)
-    {
-        if (gdp_buf_drain(datum_buf, size) != 0)
-        {
-            ep_app_error("Error draining buf");
-            return 0;
-        }
-        return size;
-    }
+    if (ent->is_cached)
+        return read(ent->cached_fd, buf, size);
     else
     {
-        return gdp_buf_read(datum_buf, buf, size);
+        gdp_buf_t *datum_buf = gdp_datum_getbuf(ent->datum);
+
+        if (buf == NULL)
+        {
+            if (gdp_buf_drain(datum_buf, size) != 0)
+            {
+                ep_app_error("Error draining buf");
+                return 0;
+            }
+            return size;
+        }
+        else
+        {
+            return gdp_buf_read(datum_buf, buf, size);
+        }
     }
 }
 /*
@@ -333,8 +382,18 @@ size_t gdpfs_log_ent_read(gdpfs_log_ent_t *ent, void *buf, size_t size)
  */
 size_t gdpfs_log_ent_peek(gdpfs_log_ent_t *ent, void *buf, size_t size)
 {
-    gdp_buf_t *datum_buf = gdp_datum_getbuf(ent->datum);
-    return gdp_buf_peek(datum_buf, buf, size);
+    if (ent->is_cached)
+    {
+        off_t current = lseek(ent->cached_fd, 0, SEEK_CUR);
+        size_t length =read(ent->cached_fd, buf, size);
+        lseek(ent->cached_fd, current, SEEK_SET);
+        return length;
+    }
+    else
+    {
+        gdp_buf_t *datum_buf = gdp_datum_getbuf(ent->datum);
+        return gdp_buf_peek(datum_buf, buf, size);
+    }
 }
 
 gdpfs_recno_t gdpfs_log_ent_recno(gdpfs_log_ent_t *ent)
@@ -344,6 +403,7 @@ gdpfs_recno_t gdpfs_log_ent_recno(gdpfs_log_ent_t *ent)
 
 /*
  * Write size bytes from buf to ent. Returns 0 on success and -1 on failure.
+ * The ent does not come from open so no need to worry about cache.
  */
 int gdpfs_log_ent_write(gdpfs_log_ent_t *ent, const void *buf, size_t size)
 {

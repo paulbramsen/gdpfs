@@ -9,6 +9,8 @@ typedef gdp_event_cbfunc_t gdpfs_callback_t;
 
 struct gdpfs_log_ent
 {
+    int cached_fd;
+    bool is_cached;
     gdp_datum_t *datum;
 };
 typedef struct gdpfs_log_ent gdpfs_log_ent_t;
