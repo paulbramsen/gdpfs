@@ -16,6 +16,7 @@
 #include "bitmap_file.h"
 #include "list.h"
 #include "figtree/figtree.h"
+#include "figtree/figtreenode.h"
 #include <assert.h>
 #include <errno.h>
 #include <dirent.h>
@@ -426,8 +427,13 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
             /* Check if this is the index. */
             if (entry.logent_type == GDPFS_LOGENT_TYPE_CHKPT)
             {
-                /* NOT IMPLEMENTED */
-                EP_ASSERT(false);
+                EP_ASSERT_REQUIRE((entry.ent_size % sizeof(figtree_node_t)) == 0);
+                
+                /* Get the last node in the log; that is the root. */
+                figtree_node_t* root = ep_mem_zalloc(sizeof(figtree_node_t));
+                gdpfs_log_ent_drain(&ents[enti], data_size - sizeof(figtree_node_t));
+                gdpfs_log_ent_read(&ents[enti], root, sizeof(figtree_node_t));
+                ft_init_with_root(&file->figtree, root);
                 break;
             }
             
@@ -437,8 +443,9 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
         if (recno == 0) {
             /* No index for this file... */
             ft_init(&file->figtree);
-            enti--;
         }
+        
+        enti--;
         
         ep_thr_mutex_lock(&file->cache_lock);
         for (; enti >= 0; enti--) {
@@ -543,7 +550,7 @@ void
 _file_chkpt(gdpfs_file_t* file)
 {
     EP_STAT estat;
-    void* chkpt;
+    figtree_node_t* chkpt;
     int len;
     gdpfs_log_ent_t ent;
     gdpfs_file_info_t* info;
@@ -570,13 +577,14 @@ _file_chkpt(gdpfs_file_t* file)
         ep_thr_cond_wait(&file->outstanding_reqs_cond, &file->outstanding_reqs_lock, NULL);
     ep_thr_mutex_unlock(&file->outstanding_reqs_lock);
     
+    
     /* Now checkpoint the log. */
     // TODO figure out which nodes are dirty in the tree and push them to the log daemon with an asynchronous write
-    get_dirty((struct ft_node**) &chkpt, &len, &file->figtree, file->last_recno + 1);
-    entry.ent_size = len;
+    get_dirty(&chkpt, &len, &file->figtree, file->last_recno + 1);
+    entry.ent_size = len * sizeof(figtree_node_t);
     gdpfs_log_ent_init(&ent);
     gdpfs_log_ent_write(&ent, &entry, sizeof(gdpfs_fmeta_t));
-    gdpfs_log_ent_write(&ent, chkpt, len);
+    gdpfs_log_ent_write(&ent, chkpt, entry.ent_size);
     ep_mem_free(chkpt);
     
     estat = gdpfs_log_append(file->log_handle, &ent, NULL, NULL);

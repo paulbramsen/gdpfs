@@ -15,6 +15,9 @@ typedef struct figtree {
 /* Initializes a Fig Tree in the specified space. */
 void ft_init(struct figtree* this);
 
+/* Initializes a Fig Tree in the specified space with the specified data to use for the root node. */
+void ft_init_with_root(struct figtree* this, struct ft_node* root);
+
 /* Sets the bytes in the range [START, END] to correspond to VALUE. */
 void ft_write(struct figtree* this, byte_index_t start, byte_index_t end,
               figtree_value_t value, gdpfs_log_t* log);

@@ -13,6 +13,10 @@ void ft_init(struct figtree* this) {
     this->root = ftn_new(0, true);
 }
 
+void ft_init_with_root(struct figtree* this, struct ft_node* root) {
+    this->root = root;
+}
+
 struct insertargs {
     struct interval range;
     figtree_value_t value;

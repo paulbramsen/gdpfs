@@ -17,14 +17,14 @@ bool fte_overlaps(struct ft_ent* this, struct ft_ent* other);
 
 /* Fig Tree Node */
 
-struct ft_node {
+typedef struct ft_node {
     int entries_len;
     struct ft_ent entries[FT_SPLITLIMIT];
     int subtrees_len;
     struct subtree_ptr subtrees[FT_SPLITLIMIT + 1];
     int HEIGHT;
     bool dirty;
-};
+} figtree_node_t;
 
 struct ft_node* ftn_new(int height, bool make_height);
 void ftn_clear(struct ft_node* this, bool make_height);
