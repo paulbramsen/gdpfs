@@ -12,7 +12,7 @@ bitmap_t *bitmap_create(size_t size)
     if (bmp)
     {
         bmp->size = size;
-        int mutex_err = ep_thr_mutex_init(&bmp->mutex, NULL);
+        int mutex_err = ep_thr_mutex_init(&bmp->mutex, EP_THR_MUTEX_DEFAULT);
         if (mutex_err != 0)
         {
             ep_mem_free(bmp);

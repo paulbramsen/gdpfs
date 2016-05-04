@@ -16,7 +16,7 @@ BINDIR=bin
 BINOUT=gdpfs
 BUILDDIR=$(BINDIR)/build
 
-_OBJ=gdpfs.o gdpfs_file.o gdpfs_log.o gdpfs_dir.o main.o bitmap.o bitmap_file.o list.o
+_OBJ=gdpfs.o gdpfs_file.o gdpfs_log.o gdpfs_dir.o main.o bitmap.o bitmap_file.o list.o figtree/figtree.o figtree/figtreenode.o figtree/interval.o figtree/utils.o
 OBJ=$(patsubst %,$(BUILDDIR)/%,$(_OBJ))
 
 all: $(BINDIR)/$(BINOUT)
