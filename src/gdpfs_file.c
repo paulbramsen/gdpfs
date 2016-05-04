@@ -412,7 +412,7 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
         size_t toread;
         
         ents = ep_mem_zalloc(entslen * sizeof(gdpfs_log_ent_t));
-        estat = gdpfs_log_ent_open(file->log_handle, &ents[0], -1);
+        estat = gdpfs_log_ent_open(file->log_handle, &ents[0], -1, true);
         recno = gdpfs_log_ent_recno(&ents[0]);
         file->last_recno = recno;
         gdpfs_log_ent_close(&ents[0]);
@@ -429,7 +429,7 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
             }
             
             // Check estat
-            estat = gdpfs_log_ent_open(file->log_handle, &ents[enti], recno);
+            estat = gdpfs_log_ent_open(file->log_handle, &ents[enti], recno, true);
             EP_ASSERT_INSIST(EP_STAT_ISOK(estat));
             data_size = gdpfs_log_ent_length(&ents[enti]);
             if (gdpfs_log_ent_peek(&ents[enti], &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
@@ -880,7 +880,7 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
                 gdpfs_log_ent_t log_ent;
                 size_t data_size, read;
                 gdpfs_fmeta_t entry;
-                gdpfs_log_ent_open(file->log_handle, &log_ent, indexgroup.value);
+                gdpfs_log_ent_open(file->log_handle, &log_ent, indexgroup.value, true);
                 data_size = gdpfs_log_ent_length(&log_ent);
                 read = gdpfs_log_ent_read(&log_ent, &entry, sizeof(gdpfs_fmeta_t));
                 if (read != sizeof(gdpfs_fmeta_t)
@@ -1131,7 +1131,7 @@ _file_load_info_cache(gdpfs_file_t* file)
     size_t read;
 
     memset(info, 0, sizeof(gdpfs_file_info_t));
-    estat = gdpfs_log_ent_open(file->log_handle, &log_ent, -1);
+    estat = gdpfs_log_ent_open(file->log_handle, &log_ent, -1, true);
     if (EP_STAT_IS_SAME(estat, GDPFS_STAT_NOTFOUND))
     {
         // no entries yet so file type is new

@@ -7,9 +7,11 @@
 typedef gdp_name_t gdpfs_log_gname_t;
 typedef gdp_event_cbfunc_t gdpfs_callback_t;
 
+typedef int64_t gdpfs_recno_t;
 struct gdpfs_log_ent
 {
     int cached_fd;
+    gdpfs_recno_t cached_recno;
     bool is_cached;
     gdp_datum_t *datum;
 };
@@ -20,7 +22,6 @@ struct gdpfs_log
     gdpfs_log_gname_t gname;
 };
 typedef struct gdpfs_log gdpfs_log_t;
-typedef int64_t gdpfs_recno_t;
 enum gdpfs_log_mode
 {
     GDPFS_LOG_MODE_RO = 0,
@@ -61,7 +62,7 @@ gdpfs_log_ent_init(gdpfs_log_ent_t* log_ent);
 
 EP_STAT
 gdpfs_log_ent_open(gdpfs_log_t *handle, gdpfs_log_ent_t *ent,
-		gdpfs_recno_t recno);
+		gdpfs_recno_t recno, bool bypass_cache);
 
 void
 gdpfs_log_ent_close(gdpfs_log_ent_t *ent);

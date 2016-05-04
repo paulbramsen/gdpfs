@@ -114,7 +114,7 @@ struct ft_node* subtree_get(struct subtree_ptr* sptr, gdpfs_log_t* log) {
         
         //printf("Going to the GDP to read subtree...\n");
         
-        estat = gdpfs_log_ent_open(log, &log_ent, sptr->recno);
+        estat = gdpfs_log_ent_open(log, &log_ent, sptr->recno, false);
         if (!EP_STAT_ISOK(estat)) {
             printf("Recno is %ld\n", sptr->recno);
         }
