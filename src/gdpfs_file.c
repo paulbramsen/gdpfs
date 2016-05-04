@@ -51,13 +51,15 @@ typedef struct
     struct list_elem rc_elem; // for the recently closed cache
     bool new_file; // Used as an optimization: if this file is new, then the cache is fully up-to-date
     bool info_cache_valid;
-    bool recently_closed;
     gdpfs_file_info_t info_cache;
     
     gdpfs_recno_t last_recno;
+    
     int outstanding_reqs;
-    EP_THR_MUTEX outstanding_reqs_lock;
-    EP_THR_COND outstanding_reqs_cond;
+    int index_flush_reqs; // true if the index has been flushed to the log
+    bool recently_closed; // true if this file is on the second chance list
+    EP_THR_MUTEX index_flush_lock;
+    EP_THR_COND index_flush_cond;
     
     figtree_t figtree;
     bool figtree_initialized;
@@ -105,6 +107,7 @@ EP_STAT _file_dealloc(gdpfs_file_t* file);
 EP_STAT _file_unref(gdpfs_file_t* file);
 EP_STAT _file_ref(gdpfs_file_t* file);
 EP_STAT _recently_closed_insert(gdpfs_file_t* file);
+void _file_chkpt(gdpfs_file_t* file);
 
 EP_STAT
 init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
@@ -182,23 +185,25 @@ _recently_closed_insert(gdpfs_file_t* file)
 {
     EP_STAT estat;
     EP_ASSERT(!file->recently_closed);
-    file->recently_closed = true;
-    EP_ASSERT(ep_thr_mutex_lock(&open_lock) == 0);
+    
     EP_ASSERT(ep_thr_mutex_lock(&rc_lock) == 0);
+    file->recently_closed = true;
     list_push_front(&recently_closed, &file->rc_elem);
     EP_ASSERT(recently_closed_size <= RC_CAP && recently_closed_size >= 0);
     if (recently_closed_size == RC_CAP)
     {
         gdpfs_file_t *oldfile = list_entry(list_pop_back(&recently_closed), gdpfs_file_t, rc_elem);
+        oldfile->recently_closed = false; // not in list anymore!
+        EP_ASSERT(ep_thr_mutex_unlock(&rc_lock) == 0);
         estat = _file_dealloc(oldfile);
     }
     else
     {
         recently_closed_size++;
+        EP_ASSERT(ep_thr_mutex_unlock(&rc_lock) == 0);
         estat = GDPFS_STAT_OK;
     }
-    ep_thr_mutex_unlock(&open_lock);
-    EP_ASSERT(ep_thr_mutex_unlock(&rc_lock) == 0);
+    
     return estat;
 }
 
@@ -324,8 +329,8 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
         if (ep_thr_mutex_init(&file->ref_count_lock, EP_THR_MUTEX_NORMAL) != 0 ||
             ep_thr_mutex_init(&file->cache_lock, EP_THR_MUTEX_NORMAL) != 0 ||
             ep_thr_mutex_init(&file->figtree_lock, EP_THR_MUTEX_NORMAL) != 0 ||
-            ep_thr_mutex_init(&file->outstanding_reqs_lock, EP_THR_MUTEX_NORMAL) != 0 ||
-            ep_thr_cond_init(&file->outstanding_reqs_cond) != 0)
+            ep_thr_mutex_init(&file->index_flush_lock, EP_THR_MUTEX_NORMAL) != 0 ||
+            ep_thr_cond_init(&file->index_flush_cond) != 0)
         {
             estat = GDPFS_STAT_SYNCH_FAIL;
             goto fail0;
@@ -385,9 +390,13 @@ open_file(uint64_t *fhp, gdpfs_file_gname_t log_name, gdpfs_file_type_t type,
         }
     }
     
+    //gdp_pname_t pn;
+    //gdp_printable_name(file->log_handle->gname, pn);
+    //printf("Log is %s\n", pn);
     ep_thr_mutex_lock(&file->figtree_lock);
     if (strict_init) {
         // Fast path for a common case
+        //printf("Optimizing\n");
         ft_init(&file->figtree);
         file->last_recno = 1;
         file->figtree_initialized = true;
@@ -558,6 +567,60 @@ gdpfs_file_close(uint64_t fh)
     return estat;
 }
 
+static void
+_file_chkpt_finish(gdp_event_t* ev)
+{
+    bool dontfree = false;
+    
+    gdpfs_file_t* file = gdp_event_getudata(ev);
+    ep_thr_mutex_lock(&file->index_flush_lock);
+    if ((--file->index_flush_reqs) != 0)
+    {
+        dontfree = true;
+    }
+    ep_thr_mutex_unlock(&file->index_flush_lock);
+    
+    if (dontfree)
+        return;
+    
+    EP_ASSERT(ep_thr_mutex_lock(&open_lock) == 0);
+    EP_ASSERT(ep_thr_mutex_lock(&rc_lock) == 0);
+    EP_ASSERT(ep_thr_mutex_lock(&file->ref_count_lock) == 0);
+    if (file->ref_count != 0 || file->recently_closed)
+    {
+        // Drop locks and don't deallocate!
+        dontfree = true;
+    }
+    EP_ASSERT(ep_thr_mutex_unlock(&file->ref_count_lock) == 0);
+    EP_ASSERT(ep_thr_mutex_unlock(&rc_lock) == 0);
+    EP_ASSERT(ep_thr_mutex_unlock(&open_lock) == 0);
+    
+    if (dontfree)
+        return;
+    
+    ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
+    if (use_cache)
+    {
+        close(file->cache_fd);
+#ifdef USE_BITMAP
+        close(file->cache_bitmap_fd);
+#endif
+    }
+    ep_mem_free(file->hash_key);
+    
+    ft_dealloc(&file->figtree);
+    
+    EP_ASSERT (ep_thr_mutex_destroy(&file->ref_count_lock) == 0);
+    EP_ASSERT (ep_thr_mutex_destroy(&file->cache_lock) == 0);
+    EP_ASSERT (ep_thr_mutex_destroy(&file->figtree_lock) == 0);
+    EP_ASSERT (ep_thr_mutex_destroy(&file->index_flush_lock) == 0);
+    EP_ASSERT (ep_thr_cond_destroy(&file->index_flush_cond) == 0);
+    ep_mem_free(file);
+}
+
+
+
+/* The index_flush_lock must be held when entering this function. */
 void
 _file_chkpt(gdpfs_file_t* file)
 {
@@ -583,30 +646,28 @@ _file_chkpt(gdpfs_file_t* file)
         .magic       = MAGIC_NUMBER,
     };
     
-    /* Wait until there are no more pending operations, then checkpoint the log. */
-    ep_thr_mutex_lock(&file->outstanding_reqs_lock);
-    while (file->outstanding_reqs > 0)
-        ep_thr_cond_wait(&file->outstanding_reqs_cond, &file->outstanding_reqs_lock, NULL);
-    ep_thr_mutex_unlock(&file->outstanding_reqs_lock);
-    
-    
     /* Now checkpoint the log. */
-    // TODO figure out which nodes are dirty in the tree and push them to the log daemon with an asynchronous write
+    //gdp_pname_t pn;
+    //gdp_printable_name(file->log_handle->gname, pn);
+    //printf("%s: Checkpoint at record %ld\n", pn, file->last_recno + 1);
     get_dirty(&chkpt, &len, &file->figtree, ++file->last_recno);
     if (len > 0)
     {
+        file->index_flush_reqs++;
         entry.ent_size = len * sizeof(figtree_node_t);
         gdpfs_log_ent_init(&ent);
         gdpfs_log_ent_write(&ent, &entry, sizeof(gdpfs_fmeta_t));
         gdpfs_log_ent_write(&ent, chkpt, entry.ent_size);
         ep_mem_free(chkpt);
     
-        estat = gdpfs_log_append(file->log_handle, &ent, NULL, NULL);
+        estat = gdpfs_log_append(file->log_handle, &ent, _file_chkpt_finish, file);
         EP_ASSERT (EP_STAT_ISOK(estat));
         gdpfs_log_ent_close(&ent);
     }
     else
+    {
         ep_mem_free(chkpt);
+    }
 }
 
 EP_STAT
@@ -614,26 +675,13 @@ _file_dealloc(gdpfs_file_t* file)
 {
     EP_STAT estat = GDPFS_STAT_OK;
     
-    ep_hash_delete(file_hash, sizeof(gdpfs_file_gname_t), file->hash_key);
-    if (use_cache)
-    {
-        close(file->cache_fd);
-#ifdef USE_BITMAP
-        close(file->cache_bitmap_fd);
-#endif
+    ep_thr_mutex_lock(&file->index_flush_lock);
+    while (file->outstanding_reqs != 0) {
+        ep_thr_cond_wait(&file->index_flush_cond, &file->index_flush_lock, NULL);
     }
-    ep_mem_free(file->hash_key);
-    
     _file_chkpt(file);
+    ep_thr_mutex_unlock(&file->index_flush_lock);
     
-    ft_dealloc(&file->figtree);
-    
-    EP_ASSERT (ep_thr_mutex_destroy(&file->ref_count_lock) == 0);
-    EP_ASSERT (ep_thr_mutex_destroy(&file->cache_lock) == 0);
-    EP_ASSERT (ep_thr_mutex_destroy(&file->figtree_lock) == 0);
-    EP_ASSERT (ep_thr_mutex_destroy(&file->outstanding_reqs_lock) == 0);
-    EP_ASSERT (ep_thr_cond_destroy(&file->outstanding_reqs_cond) == 0);
-    ep_mem_free(file);
     return estat;
 }
 
@@ -763,7 +811,7 @@ void handle_read(gdp_event_t* ev)
     if (gdpfs_log_ent_read(&log_ent, &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
         || data_size != sizeof(gdpfs_fmeta_t) + entry.ent_size)
     {
-        ep_app_fatal("Corrupt log entry in file.");
+        ep_app_fatal("Corrupt log entry in file (#3).");
     }
     
     gdpfs_log_ent_drain(&log_ent, rs->start - entry.ent_offset);
@@ -836,18 +884,20 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
             /* This if statement is really just a workaround for until we can get multiread working... */
             if (indexgroup.value > 0) {
                 gdpfs_log_ent_t log_ent;
-                size_t data_size;
+                size_t data_size, read;
                 gdpfs_fmeta_t entry;
                 gdpfs_log_ent_open(file->log_handle, &log_ent, indexgroup.value);
                 data_size = gdpfs_log_ent_length(&log_ent);
-                if (gdpfs_log_ent_read(&log_ent, &entry, sizeof(gdpfs_fmeta_t)) != sizeof(gdpfs_fmeta_t)
+                read = gdpfs_log_ent_read(&log_ent, &entry, sizeof(gdpfs_fmeta_t));
+                if (read != sizeof(gdpfs_fmeta_t)
                     || data_size != sizeof(gdpfs_fmeta_t) + entry.ent_size)
                 {
-                    ep_app_fatal("Corrupt log entry in file.");
+                    ep_app_fatal("Corrupt log entry in file (#4).");
                 }
     
                 gdpfs_log_ent_drain(&log_ent, indexgroup.irange.left - entry.ent_offset);
                 gdpfs_log_ent_read(&log_ent, buf + (indexgroup.irange.left - offset), indexgroup.irange.right - indexgroup.irange.left + 1);
+                gdpfs_log_ent_close(&log_ent);
                 continue;
             }
             rs = ep_mem_zalloc(sizeof(gdpfs_readstate_t)); // freed by the callback
@@ -892,15 +942,16 @@ gdpfs_file_read(uint64_t fh, void *buf, size_t size, off_t offset)
     return do_read(fh, buf, size, offset);
 }
 
-static void free_fileref(gdp_event_t* ev)
+static void
+free_fileref(gdp_event_t* ev)
 {
     EP_STAT estat;
     gdpfs_file_t* file = gdp_event_getudata(ev);
-    ep_thr_mutex_lock(&file->outstanding_reqs_lock);
-    if (--file->outstanding_reqs == 0) {
-        ep_thr_cond_signal(&file->outstanding_reqs_cond);
+    ep_thr_mutex_lock(&file->index_flush_lock);
+    if ((--file->outstanding_reqs) == 0) {
+        ep_thr_cond_signal(&file->index_flush_cond);
     }
-    ep_thr_mutex_unlock(&file->outstanding_reqs_lock);
+    ep_thr_mutex_unlock(&file->index_flush_lock);
     estat = gdp_event_getstat(ev);
     if (!EP_STAT_ISOK(estat))
         ep_app_error("Could not properly append: %d", EP_STAT_DETAIL(estat));
@@ -953,9 +1004,9 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     if (!EP_STAT_ISOK(estat))
         goto fail0;
     
-    ep_thr_mutex_lock(&file->outstanding_reqs_lock);
+    ep_thr_mutex_lock(&file->index_flush_lock);
     file->outstanding_reqs++;
-    ep_thr_mutex_unlock(&file->outstanding_reqs_lock);
+    ep_thr_mutex_unlock(&file->index_flush_lock);
     
     // Write to cache. true is for overwriting cache
     if (use_cache)
