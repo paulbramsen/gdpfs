@@ -51,7 +51,7 @@ typedef struct
     bool info_cache_valid;
     bool recently_closed;
     gdpfs_file_info_t info_cache;
-    
+
     EP_THR_MUTEX ref_count_lock;
     EP_THR_MUTEX cache_lock;
 } gdpfs_file_t;
@@ -97,7 +97,7 @@ EP_STAT _file_ref(gdpfs_file_t* file);
 EP_STAT _recently_closed_insert(gdpfs_file_t* file);
 
 EP_STAT
-init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
+init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache, char *gdp_router_addr)
 {
     EP_STAT estat;
     DIR *dirp;
@@ -106,7 +106,7 @@ init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
     use_cache = _use_cache;
 
     estat = GDPFS_STAT_OOMEM;
-    
+
     /* Initialize cache of recently closed files. */
     list_init(&recently_closed);
     recently_closed_size = 0;
@@ -114,7 +114,7 @@ init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
         return GDPFS_STAT_SYNCH_FAIL;
     if (ep_thr_mutex_init(&open_lock, EP_THR_MUTEX_NORMAL) != 0)
         return GDPFS_STAT_SYNCH_FAIL;
-    
+
     files = ep_mem_zalloc(sizeof(gdpfs_file_t *) * MAX_FHS);
     if (files == NULL)
         goto fail2;
@@ -125,7 +125,7 @@ init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache)
     if (file_hash == NULL)
         goto fail0;
 
-    estat = init_gdpfs_log(fs_mode);
+    estat = init_gdpfs_log(fs_mode, gdp_router_addr);
     if (!EP_STAT_ISOK(estat))
         goto fail0;
 
@@ -316,7 +316,7 @@ open_file(EP_STAT *ret_stat, gdpfs_file_gname_t log_name, gdpfs_file_type_t type
             ep_mem_free(cache_name);
             ep_mem_free(cache_bitmap_name);
         }
-        
+
         if (ep_thr_mutex_init(&file->ref_count_lock, EP_THR_MUTEX_NORMAL) != 0)
         {
             if (ret_stat)
@@ -473,13 +473,13 @@ _file_unref(gdpfs_file_t* file)
 {
     EP_STAT estat;
     uint32_t new_ref_count;
-    
+
     if (ep_thr_mutex_lock(&file->ref_count_lock) != 0)
         return GDPFS_STAT_SYNCH_FAIL;
     new_ref_count = --file->ref_count;
     if (ep_thr_mutex_unlock(&file->ref_count_lock) != 0)
         return GDPFS_STAT_SYNCH_FAIL;
-    
+
     if (new_ref_count == 0)
         estat = _recently_closed_insert(file);
     else
@@ -526,7 +526,7 @@ static size_t do_read_starting_at_rec_no(gdpfs_file_t *file, char *buf, size_t s
         }
         goto fail0;
     }
-    
+
     printf("Read ");
     gdp_datum_print(log_ent.datum,	// message to print
 					stdout,					// file to print it to
@@ -590,14 +590,14 @@ do_read(uint64_t fh, char *buf, size_t size, off_t offset)
     file = lookup_fh(fh);
     if (file == NULL)
         return 0;
-        
+
     estat = _file_get_info_raw(&info, file);
     if (!EP_STAT_ISOK(estat))
     {
         ep_app_error("Could not get file info during read: %d", EP_STAT_DETAIL(estat));
         return 0;
     }
-    
+
     if (size + offset > info->file_size)
     {
         if (offset > info->file_size)
@@ -675,7 +675,7 @@ do_write(uint64_t fh, const char *buf, size_t size, off_t offset,
     estat = _file_ref(file);
     if (!EP_STAT_ISOK(estat))
         goto fail0;
-        
+
     // Write to cache. true is for overwriting cache
     if (use_cache)
     {
@@ -760,7 +760,7 @@ gdpfs_file_get_info(gdpfs_file_info_t** info, uint64_t fh)
     gdpfs_file_t* file = lookup_fh(fh);
     if (file == NULL)
         return GDPFS_STAT_BADFH;
-        
+
     return _file_get_info_raw(info, file);
 }
 
@@ -777,7 +777,7 @@ _file_get_info_raw(gdpfs_file_info_t** info, gdpfs_file_t* file)
         }
         file->info_cache_valid = true;
     }
-        
+
     *info = &file->info_cache;
     return GDPFS_STAT_OK;
 }
@@ -921,7 +921,7 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         ep_app_error("Illegal call to gdpfs_file_get_cache with cache disabled.");
         return false;
     }
-    
+
     /* Optimization: if the file was opened, then its cache is by definition up-to-date.
      * Without this optimization, the client may query the GDP for things it doesn't have
      * to. For example, suppose that the user writes at bytes 1000 to 1004 without writing
@@ -937,11 +937,11 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
         hit = true;
         goto check;
     }
-    
+
     if (size == 0)
         return true;
 
-#ifndef USE_BITMAP        
+#ifndef USE_BITMAP
     ep_thr_mutex_lock(&file->cache_lock);
     lrv = lseek(file->cache_fd, offset, SEEK_HOLE);
     if (lrv == (off_t) -1)
@@ -953,7 +953,7 @@ static bool gdpfs_file_get_cache(gdpfs_file_t *file, void *buffer, size_t size,
     hit = bitmap_file_isset(file->cache_bitmap_fd, offset, offset + size);
 
 #endif
-    
+
 check:
     if (hit)
     {
@@ -970,7 +970,7 @@ check:
     {
         printf("Cache miss\n");
     }
-    
+
     ep_thr_mutex_unlock(&file->cache_lock);
     return hit;
 

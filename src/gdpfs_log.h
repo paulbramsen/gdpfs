@@ -25,7 +25,7 @@ typedef gdp_event_cbfunc_t gdpfs_callback_t;
  * global init of log subsystem
  */
 EP_STAT
-init_gdpfs_log(gdpfs_log_mode_t log_mode);
+init_gdpfs_log(gdpfs_log_mode_t log_mode, char *gdp_router_addr);
 
 /*
  * log management

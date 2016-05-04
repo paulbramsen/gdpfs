@@ -29,11 +29,11 @@ struct gdpfs_log
     gdpfs_log_gname_t gname;
 };
 
-EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode)
+EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode, char *gdp_router_addr)
 {
     EP_STAT estat;
 
-    estat = gdp_init(NULL);
+    estat = gdp_init(gdp_router_addr);
 
     precreated_front = 0;
     precreated_back = 0;
@@ -45,7 +45,7 @@ EP_STAT init_gdpfs_log(gdpfs_log_mode_t log_mode)
     // Create thread to do precreate threads. Currently our synchronization by design
     // can only work for one of these producers.
     pthread_create(&producer, NULL, _producer_thread, NULL);
-    
+
     ep_thr_mutex_init(&creation_mutex, EP_THR_MUTEX_DEFAULT);
     if (!EP_STAT_ISOK(estat))
     {
@@ -246,7 +246,7 @@ EP_STAT
 gdpfs_log_ent_init(gdpfs_log_ent_t *log_ent)
 {
     log_ent->datum = gdp_datum_new();
-    
+
     if (log_ent->datum == NULL)
         return GDPFS_STAT_OOMEM;
     else
