@@ -444,13 +444,6 @@ gdpfs_chown (const char *filepath, uid_t uid, gid_t gid)
     return 0;
 }
 
-static int
-gdpfs_utimens(const char* filepath, const struct timespec ts[2])
-{
-    ep_app_warn("utimens not implemented. File:\"%s\"", filepath);
-    return 0;
-}
-
 static struct fuse_operations gdpfs_oper = {
     .getattr        = gdpfs_getattr,
     .readdir        = gdpfs_readdir,
@@ -470,7 +463,6 @@ static struct fuse_operations gdpfs_oper = {
     .chmod          = gdpfs_chmod,
     .chown          = gdpfs_chown,
     .access         = gdpfs_access,
-    .utimens        = gdpfs_utimens,
 };
 
 int gdpfs_run(char *root_log, char *gdp_router_addr, bool ro, bool use_cache, int fuse_argc, char *fuse_argv[])
