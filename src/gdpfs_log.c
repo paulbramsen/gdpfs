@@ -242,7 +242,7 @@ EP_STAT gdpfs_log_append(gdpfs_log_t *handle, gdpfs_log_ent_t *ent, gdpfs_callba
 
 void gdpfs_log_gname(gdpfs_log_t *handle, gdpfs_log_gname_t gname)
 {
-     memcpy(gname, handle->gname, sizeof(gname) * sizeof(gname[0]));
+     memcpy(gname, handle->gname, sizeof(gdpfs_log_gname_t) * sizeof(gname[0]));
 }
 
 /* Initializes an UNCACHED log entry. */
