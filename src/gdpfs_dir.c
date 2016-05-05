@@ -323,7 +323,7 @@ gdpfs_dir_remove_file_at_path(const char *filepath, gdpfs_file_type_t type)
         return estat;
     }
 
-    printf("removing %s (trash this print)\n", filepath);
+    //printf("removing %s (trash this print)\n", filepath);
     estat = gdpfs_dir_remove(fh, file, type);
     gdpfs_file_close(fh);
     if (!EP_STAT_ISOK(estat))
