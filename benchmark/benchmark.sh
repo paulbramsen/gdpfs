@@ -45,8 +45,13 @@ function timed() {
     accum=`awk "BEGIN{print $new+$accum}"`
 }
 
-timed "cp -r $FILE ."
-timed "tar zxf $DIR.tar.gz"
-cd $DIR
-timed "make"
+
+if [ -z $2 ] || [ $2 = "cptar" ]; then
+    timed "cp -r $FILE ."
+    timed "tar zxf $DIR.tar.gz"
+fi
+if [ -z $2 ] || [ $2 = "make" ]; then
+    cd $DIR
+    timed "make"
+fi
 echo "TIME IS: $accum seconds"
