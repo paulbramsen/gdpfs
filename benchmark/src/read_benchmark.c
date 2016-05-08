@@ -9,7 +9,7 @@
 
 static void print_usage();
 #define BLOCKSIZE 4096
-#define BILLION 1000000000.0
+#define BILLION 1000000000
 char buffer[100000];
 int main(int argc, char** argv)
 {
@@ -19,6 +19,8 @@ int main(int argc, char** argv)
     FILE *output;
     int i;
     int fd;
+    int j;
+
     struct timespec first_ts;
     struct timespec second_ts;
 
@@ -32,8 +34,13 @@ int main(int argc, char** argv)
     for (i = 0; i < num; i++)
     {
         clock_gettime(CLOCK_REALTIME, &first_ts);
-        read(fd, block, BLOCKSIZE);
+        int res = read(fd, block, BLOCKSIZE);
         clock_gettime(CLOCK_REALTIME, &second_ts);
+        if (res != BLOCKSIZE) printf(":(\n");
+        for (j = 0; j < BLOCKSIZE; j++)
+        {
+            if (block[j] != 'A') printf(":(\n");
+        }
         uint64_t first = ((uint64_t) first_ts.tv_sec * BILLION) + ((uint64_t) first_ts.tv_nsec);
         uint64_t second = ((uint64_t) second_ts.tv_sec * BILLION) + ((uint64_t) second_ts.tv_nsec);
         fprintf(output, "%lu\n", second - first);
