@@ -90,6 +90,10 @@ static EP_THR_MUTEX open_lock;
 static struct list recently_closed;
 static int recently_closed_size;
 
+static EP_THR_MUTEX final_flush_lock;
+static EP_THR_COND final_flush_cond;
+static int final_flush_cnt;
+
 // Private Functions
 static size_t do_write(uint64_t fh, const char *buf,
         size_t size, off_t offset, const gdpfs_file_info_t *info);
@@ -104,7 +108,7 @@ EP_STAT _file_dealloc(gdpfs_file_t* file);
 EP_STAT _file_unref(gdpfs_file_t* file);
 EP_STAT _file_ref(gdpfs_file_t* file);
 EP_STAT _recently_closed_insert(gdpfs_file_t* file);
-void _file_chkpt(gdpfs_file_t* file, bool do_callback);
+void _file_chkpt(gdpfs_file_t* file, bool final_flush);
 
 EP_STAT
 init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache, char *gdp_router_addr)
@@ -124,6 +128,11 @@ init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache, char *gdp_router_add
         return GDPFS_STAT_SYNCH_FAIL;
     if (ep_thr_mutex_init(&open_lock, EP_THR_MUTEX_NORMAL) != 0)
         return GDPFS_STAT_SYNCH_FAIL;
+    if (ep_thr_mutex_init(&final_flush_lock, EP_THR_MUTEX_NORMAL) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    if (ep_thr_cond_init(&final_flush_cond) != 0)
+        return GDPFS_STAT_SYNCH_FAIL;
+    final_flush_cnt = 0;
 
     files = ep_mem_zalloc(sizeof(gdpfs_file_t *) * MAX_FHS);
     if (files == NULL)
@@ -170,16 +179,36 @@ fail2:
 }
 
 void
+count_file(size_t keylen, const void* key, void* val, va_list av)
+{
+	final_flush_cnt++;
+}
+
+void
 checkpoint_file_on_stop(size_t keylen, const void* key, void* val, va_list av)
 {
-	_file_chkpt((gdpfs_file_t*) val, false);
+	_file_chkpt((gdpfs_file_t*) val, true);
 }
 
 void
 stop_gdpfs_file()
 {
+	printf("Checkpointing open files...\n");
+	
+	EP_ASSERT(ep_thr_mutex_lock(&final_flush_lock) == 0);
+	ep_hash_forall(file_hash, count_file);
+	EP_ASSERT(ep_thr_mutex_unlock(&final_flush_lock) == 0);
+	
 	ep_hash_forall(file_hash, checkpoint_file_on_stop);
-	sleep(10);
+	
+	EP_ASSERT(ep_thr_mutex_lock(&final_flush_lock) == 0);
+	while (final_flush_cnt > 0)
+	{
+		ep_thr_cond_wait(&final_flush_cond, &final_flush_lock, NULL);
+	}
+	EP_ASSERT(ep_thr_mutex_unlock(&final_flush_lock) == 0);
+	printf("Done checkpointing open files.\n");
+	
     ep_hash_free(file_hash);
     bitmap_free(fhs);
 }
@@ -578,7 +607,16 @@ _file_chkpt_finish(gdp_event_t* ev)
 
     gdpfs_file_t* file = gdp_event_getudata(ev);
     if (file == NULL)
-        return;
+    {
+        EP_ASSERT(ep_thr_mutex_lock(&final_flush_lock) == 0);
+		final_flush_cnt--;
+		if (final_flush_cnt == 0)
+		{
+			ep_thr_cond_signal(&final_flush_cond);
+		}
+		EP_ASSERT(ep_thr_mutex_unlock(&final_flush_lock) == 0);
+		return;
+    }
         
     ep_thr_mutex_lock(&file->index_flush_lock);
     if ((--file->index_flush_reqs) != 0)
@@ -629,7 +667,7 @@ _file_chkpt_finish(gdp_event_t* ev)
 
 /* The index_flush_lock must be held when entering this function. */
 void
-_file_chkpt(gdpfs_file_t* file, bool do_callback)
+_file_chkpt(gdpfs_file_t* file, bool final_flush)
 {
     EP_STAT estat;
     figtree_node_t* chkpt;
@@ -671,7 +709,7 @@ _file_chkpt(gdpfs_file_t* file, bool do_callback)
         gdpfs_log_ent_write(&ent, chkpt, entry.ent_size);
         ep_mem_free(chkpt);
 
-        estat = gdpfs_log_append(file->log_handle, &ent, _file_chkpt_finish, do_callback ? file : NULL);
+        estat = gdpfs_log_append(file->log_handle, &ent, _file_chkpt_finish, final_flush ? NULL : file);
         EP_ASSERT (EP_STAT_ISOK(estat));
         gdpfs_log_ent_close(&ent);
     }
@@ -690,7 +728,7 @@ _file_dealloc(gdpfs_file_t* file)
     while (file->outstanding_reqs != 0) {
         ep_thr_cond_wait(&file->index_flush_cond, &file->index_flush_lock, NULL);
     }
-    _file_chkpt(file, true);
+    _file_chkpt(file, false);
     ep_thr_mutex_unlock(&file->index_flush_lock);
 
     return estat;
