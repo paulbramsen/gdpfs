@@ -104,7 +104,7 @@ EP_STAT _file_dealloc(gdpfs_file_t* file);
 EP_STAT _file_unref(gdpfs_file_t* file);
 EP_STAT _file_ref(gdpfs_file_t* file);
 EP_STAT _recently_closed_insert(gdpfs_file_t* file);
-void _file_chkpt(gdpfs_file_t* file);
+void _file_chkpt(gdpfs_file_t* file, bool do_callback);
 
 EP_STAT
 init_gdpfs_file(gdpfs_file_mode_t fs_mode, bool _use_cache, char *gdp_router_addr)
@@ -170,11 +170,18 @@ fail2:
 }
 
 void
+checkpoint_file_on_stop(size_t keylen, const void* key, void* val, va_list av)
+{
+	_file_chkpt((gdpfs_file_t*) val, false);
+}
+
+void
 stop_gdpfs_file()
 {
+	ep_hash_forall(file_hash, checkpoint_file_on_stop);
+	sleep(10);
     ep_hash_free(file_hash);
     bitmap_free(fhs);
-    // TODO: close the logs
 }
 
 EP_STAT
@@ -570,6 +577,9 @@ _file_chkpt_finish(gdp_event_t* ev)
     bool dontfree = false;
 
     gdpfs_file_t* file = gdp_event_getudata(ev);
+    if (file == NULL)
+        return;
+        
     ep_thr_mutex_lock(&file->index_flush_lock);
     if ((--file->index_flush_reqs) != 0)
     {
@@ -619,7 +629,7 @@ _file_chkpt_finish(gdp_event_t* ev)
 
 /* The index_flush_lock must be held when entering this function. */
 void
-_file_chkpt(gdpfs_file_t* file)
+_file_chkpt(gdpfs_file_t* file, bool do_callback)
 {
     EP_STAT estat;
     figtree_node_t* chkpt;
@@ -627,6 +637,8 @@ _file_chkpt(gdpfs_file_t* file)
     gdpfs_log_ent_t ent;
     gdpfs_file_info_t* info;
 
+    EP_ASSERT_REQUIRE (file != NULL);
+    
     estat = _file_get_info_raw(&info, file);
     if (!EP_STAT_ISOK(estat))
     {
@@ -659,7 +671,7 @@ _file_chkpt(gdpfs_file_t* file)
         gdpfs_log_ent_write(&ent, chkpt, entry.ent_size);
         ep_mem_free(chkpt);
 
-        estat = gdpfs_log_append(file->log_handle, &ent, _file_chkpt_finish, file);
+        estat = gdpfs_log_append(file->log_handle, &ent, _file_chkpt_finish, do_callback ? file : NULL);
         EP_ASSERT (EP_STAT_ISOK(estat));
         gdpfs_log_ent_close(&ent);
     }
@@ -678,7 +690,7 @@ _file_dealloc(gdpfs_file_t* file)
     while (file->outstanding_reqs != 0) {
         ep_thr_cond_wait(&file->index_flush_cond, &file->index_flush_lock, NULL);
     }
-    _file_chkpt(file);
+    _file_chkpt(file, true);
     ep_thr_mutex_unlock(&file->index_flush_lock);
 
     return estat;
