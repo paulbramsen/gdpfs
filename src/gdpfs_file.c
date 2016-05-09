@@ -172,7 +172,8 @@ fail2:
 void
 checkpoint_file_on_stop(size_t keylen, const void* key, void* val, va_list av)
 {
-	_file_chkpt((gdpfs_file_t*) val, false);
+    if (val != NULL)
+        _file_chkpt((gdpfs_file_t*) val, false);
 }
 
 void
