@@ -3,6 +3,8 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <unistd.h>
+#include <stdlib.h>
 
 static void print_usage();
 #define BLOCKSIZE 4096
