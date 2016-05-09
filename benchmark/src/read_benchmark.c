@@ -8,7 +8,7 @@
 
 
 static void print_usage();
-#define BLOCKSIZE 4096
+#define BLOCKSIZE 131072
 #define BILLION 1000000000
 char buffer[100000];
 int main(int argc, char** argv)
