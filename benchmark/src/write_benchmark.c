@@ -30,11 +30,12 @@ int main(int argc, char** argv)
     block = malloc(BLOCKSIZE);
     memset(block, 'A', BLOCKSIZE);
     output = fopen(filename, "w+");
-    fd = open("write_file", O_TRUNC | O_CREAT | O_RDWR, 0744);
     for (i = 0; i < num; i++)
     {
         clock_gettime(CLOCK_REALTIME, &first_ts);
+        fd = open("write_file", O_CREAT | O_RDWR | O_APPEND, 0744);
         write(fd, block, BLOCKSIZE);
+        close(fd);
         clock_gettime(CLOCK_REALTIME, &second_ts);
         uint64_t first = ((uint64_t) first_ts.tv_sec * BILLION) + ((uint64_t) first_ts.tv_nsec);
         uint64_t second = ((uint64_t) second_ts.tv_sec * BILLION) + ((uint64_t) second_ts.tv_nsec);
